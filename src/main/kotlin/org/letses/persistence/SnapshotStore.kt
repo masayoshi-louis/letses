@@ -17,6 +17,7 @@
 
 package org.letses.persistence
 
+import kotlinx.coroutines.flow.Flow
 import org.letses.entity.EntityState
 import org.letses.eventsourcing.EventVersion
 
@@ -33,5 +34,17 @@ interface SnapshotStore<S : EntityState> {
     ): Snapshot<S>?
 
     suspend fun load(entityId: String): Snapshot<S>?
+
+    interface ChildEntityStore<E : EntityState> {
+
+        suspend fun save(state: E, parentId: String?)
+
+        fun loadBy(parentId: String): Flow<E>
+
+        suspend fun delete(entity: E, parentId: String?)
+
+        suspend fun deleteAllBy(parentId: String)
+
+    }
 
 }

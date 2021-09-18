@@ -17,6 +17,13 @@
 
 package org.letses.entity
 
-abstract class EntityState {
-    abstract val identity: String
+abstract class ComplexEntityState<S : EntityState> : EntityState() {
+    @Retention(AnnotationRetention.RUNTIME)
+    @Target(AnnotationTarget.PROPERTY)
+    annotation class Children()
+
+    abstract val root: S
+
+    final override val identity: String
+        get() = root.identity
 }
