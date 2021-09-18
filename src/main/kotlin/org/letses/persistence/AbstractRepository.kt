@@ -57,13 +57,16 @@ abstract class AbstractRepository<S : EntityState, E : Event, in C : MsgHandlerC
         consistentSnapshotTxManager = consistentSnapshotTxManager
     ) {
 
+        private var prevSnapshot: Snapshot<S>? = null
+
         override suspend fun saveEvents(events: List<PersistentEventEnvelope<E>>, expectedVersion: EventVersion) {
             eventStore.append(streamName(entityId), events, expectedVersion)
         }
 
         override suspend fun saveSnapshot(takeSnapshot: () -> Snapshot<S>) {
             snapshotStore?.let { ss ->
-                ss.save(entityId, version, takeSnapshot)?.let { s ->
+                ss.save(entityId, version, prevSnapshot, takeSnapshot)?.let { s ->
+                    prevSnapshot = s
                     log.debug("<$correlationId>[${model.eventCategory}_$entityId] snapshot saved, ver=${s.version}")
                 }
             }
@@ -89,6 +92,7 @@ abstract class AbstractRepository<S : EntityState, E : Event, in C : MsgHandlerC
         suspend fun begin() {
             snapshotStore?.load(entityId)?.let { s ->
                 loadSnapshot(s)
+                prevSnapshot = s
                 log.debug("<$correlationId>[${model.eventCategory}_$entityId] snapshot loaded, ver=${s.version}")
             }
             eventStore.read(streamName(entityId), version + 1, ::applyEvent)

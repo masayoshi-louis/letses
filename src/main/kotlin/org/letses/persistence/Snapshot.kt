@@ -20,8 +20,14 @@ package org.letses.persistence
 import org.letses.entity.EntityState
 import org.letses.eventsourcing.EventVersion
 
-data class Snapshot<out S : EntityState>(
-    val state: S,
-    val version: EventVersion,
+interface Snapshot<out S : EntityState> {
+    val state: S
+    val version: EventVersion
     val deduplicationMemory: List<String>
-)
+}
+
+data class BasicSnapshot<out S : EntityState>(
+    override val state: S,
+    override val version: EventVersion,
+    override val deduplicationMemory: List<String>
+) : Snapshot<S>

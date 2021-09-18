@@ -28,6 +28,7 @@ interface SnapshotStore<S : EntityState> {
     suspend fun save(
         entityId: String,
         version: EventVersion,
+        prevSnapshot: Snapshot<S>?,
         takeSnapshot: () -> Snapshot<S>
     ): Snapshot<S>?
 

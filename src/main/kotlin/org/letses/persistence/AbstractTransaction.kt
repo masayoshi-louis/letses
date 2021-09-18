@@ -192,7 +192,7 @@ abstract class AbstractTransaction<S : EntityState, E : Event, in C : MsgHandler
 
     protected abstract suspend fun publishEvents(events: () -> List<PersistentEventEnvelope<E>>)
 
-    private fun taskSnapshot(): Snapshot<S> = Snapshot(state, version, deduplicationMemory.toList())
+    private fun taskSnapshot(): Snapshot<S> = BasicSnapshot(state, version, deduplicationMemory.toList())
 
     private fun memorizeMsgId(id: String) {
         if (deduplicationMemSize > 0) deduplicationMemory.add(id)
