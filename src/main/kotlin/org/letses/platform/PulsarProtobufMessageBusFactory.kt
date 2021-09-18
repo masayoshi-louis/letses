@@ -63,6 +63,9 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
 
     var useTxn: Boolean = false
 
+    var commandListenerEnabled: Boolean = true
+    var eventListenerEnabled: Boolean = true
+
     /**
      * channel (tenant/ns) -> schemas
      */
@@ -140,6 +143,8 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
         commandHandlers: Map<AggregateType<out EntityState, out Event>, CommandHandler<*>>,
         boundedContextName: String
     ) {
+        if (!commandListenerEnabled) return
+
         // create a consumer instance for each command type
         aggregates.forEach { (aggregate, _) ->
             aggregate.commandChannel?.let { cmdCh ->
@@ -195,6 +200,8 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
         commandHandlers: Map<AggregateType<out EntityState, out Event>, CommandHandler<*>>,
         boundedContextName: String
     ) {
+        if (!eventListenerEnabled) return
+
         aggregates.forEach { (aggregate, _) ->
             aggregate.subscribedChannels.forEach { topic ->
                 val theSchema = topicSchema(topic)
