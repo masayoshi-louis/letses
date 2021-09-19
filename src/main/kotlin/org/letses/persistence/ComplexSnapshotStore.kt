@@ -30,13 +30,13 @@ import kotlin.reflect.full.memberProperties
 
 class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private constructor(
     private val rootStore: SnapshotStore<S>,
-    private val stores: Map<KClass<*>, SnapshotStore<*>>
+    private val stores: Map<KClass<*>, SnapshotStore.ChildEntityStore<*>>
 ) : SnapshotStore<C> {
 
     companion object {
         class Builder<S : EntityState, C : ComplexEntityState<S>> {
             lateinit var rootStore: SnapshotStore<S>
-            val stores: MutableMap<KClass<*>, SnapshotStore<*>> = mutableMapOf()
+            val stores: MutableMap<KClass<*>, SnapshotStore.ChildEntityStore<*>> = mutableMapOf()
 
             fun build(): ComplexSnapshotStore<S, C> = ComplexSnapshotStore(rootStore, stores)
         }
@@ -44,35 +44,46 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         @Suppress("UNCHECKED_CAST")
         operator fun <R : EntityState, C : ComplexEntityState<R>> invoke(
             cls: KClass<C>,
-            storeProvider: (KType) -> SnapshotStore<*>
+            rootStore: SnapshotStore<R>,
+            storeProvider: (KType) -> SnapshotStore.ChildEntityStore<*>
         ): ComplexSnapshotStore<R, C> {
             val builder = Builder<R, C>()
-
-            fun process(kType: KType) {
-                val kcls = kType.classifier as KClass<*>
-                when {
-                    kcls == ImmutableList::class -> process(kType.arguments[0].type!!)
-                    kcls == ImmutableSet::class -> process(kType.arguments[0].type!!)
-                    kcls.isSubclassOf(ComplexEntityState::class) -> {
-                        builder.stores[kcls] = invoke(
-                            kcls as KClass<ComplexEntityState<EntityState>>,
-                            storeProvider
-                        )
-                    }
-                    else -> {
-                        builder.stores[kcls] = storeProvider(kType)
-                    }
-                }
-            }
-
-            builder.rootStore =
-                storeProvider(cls.memberProperties.single { it.name == "root" }.returnType) as SnapshotStore<R>
+            builder.rootStore = rootStore
             cls.memberProperties
                 .filter { it.findAnnotation<ComplexEntityState.Children>() != null }
                 .forEach { child ->
-                    process(child.returnType)
+                    builder.process(child.returnType, storeProvider)
                 }
             return builder.build()
+        }
+
+        private fun <S : EntityState, C : ComplexEntityState<S>> Builder<S, C>.processChildren(
+            kcls: KClass<*>,
+            storeProvider: (KType) -> SnapshotStore.ChildEntityStore<*>
+        ) {
+            kcls.memberProperties
+                .filter { it.findAnnotation<ComplexEntityState.Children>() != null }
+                .forEach { child ->
+                    process(child.returnType, storeProvider)
+                }
+        }
+
+        private fun <S : EntityState, C : ComplexEntityState<S>> Builder<S, C>.process(
+            kType: KType,
+            storeProvider: (KType) -> SnapshotStore.ChildEntityStore<*>
+        ) {
+            val kcls = kType.classifier as KClass<*>
+            when {
+                kcls == ImmutableList::class -> process(kType.arguments[0].type!!, storeProvider)
+                kcls == ImmutableSet::class -> process(kType.arguments[0].type!!, storeProvider)
+                kcls.isSubclassOf(ComplexEntityState::class) -> {
+                    process(kcls.memberProperties.single { it.name == "root" }.returnType, storeProvider)
+                    processChildren(kcls, storeProvider)
+                }
+                else -> {
+                    stores[kcls] = storeProvider(kType)
+                }
+            }
         }
     }
 

@@ -27,7 +27,6 @@ import kotlin.reflect.KClass
 import kotlin.reflect.full.memberProperties
 import kotlin.reflect.jvm.isAccessible
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 
 @Suppress("UNCHECKED_CAST")
@@ -59,30 +58,27 @@ class ComplexSnapshotStoreTests {
         val childB: ImmutableSet<ChildB>
     ) : ComplexEntityState<R>()
 
-    interface TestStore<S : EntityState> : SnapshotStore<S> {
+    interface TestSnapshotStore<S : EntityState> : SnapshotStore<S> {
+        val kcls: KClass<S>
+    }
+
+    interface TestStore<S : EntityState> : SnapshotStore.ChildEntityStore<S> {
         val kcls: KClass<S>
     }
 
     @Test
     fun testBuilder() {
-        val cStore = ComplexSnapshotStore<R, C>(C::class) { ktype ->
+        val rStore = Mockito.mock(TestSnapshotStore::class.java) as TestSnapshotStore<R>
+        val cStore = ComplexSnapshotStore(C::class, rStore) { ktype ->
             Mockito.mock(TestStore::class.java).also {
                 Mockito.`when`(it.kcls).thenReturn(ktype.classifier as KClass<out EntityState>)
             }
         }
 
-        assertEquals(R::class, (cStore.rootStore as TestStore<*>).kcls)
         val cStoreStores = cStore.stores
         assertEquals(2, cStoreStores.size)
         assertEquals(ChildB::class, (cStoreStores[ChildB::class] as TestStore<*>).kcls)
-
-
-        val aStore = cStoreStores[ChildA::class]
-        assertTrue(aStore is ComplexSnapshotStore<*, *>)
-        assertEquals(ChildAR::class, (aStore.rootStore as TestStore<*>).kcls)
-        val aStoreStores = aStore.stores
-        assertEquals(1, aStoreStores.size)
-        assertEquals(ChildB::class, (aStoreStores[ChildB::class] as TestStore<*>).kcls)
+        assertEquals(ChildAR::class, (cStoreStores[ChildAR::class] as TestStore<*>).kcls)
     }
 
     private val ComplexSnapshotStore<*, *>.rootStore: SnapshotStore<*>
@@ -92,10 +88,10 @@ class ComplexSnapshotStoreTests {
                 call(this@rootStore)
             } as SnapshotStore<*>
 
-    private val ComplexSnapshotStore<*, *>.stores: Map<KClass<*>, SnapshotStore<*>>
+    private val ComplexSnapshotStore<*, *>.stores: Map<KClass<*>, SnapshotStore.ChildEntityStore<*>>
         get() = this::class.memberProperties
             .single { it.name == "stores" }.getter.run {
                 isAccessible = true
                 call(this@stores)
-            } as Map<KClass<*>, SnapshotStore<*>>
+            } as Map<KClass<*>, SnapshotStore.ChildEntityStore<*>>
 }

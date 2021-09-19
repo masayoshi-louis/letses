@@ -34,4 +34,8 @@ interface SnapshotStore<S : EntityState> {
 
     suspend fun load(entityId: String): Snapshot<S>?
 
+    interface ChildEntityStore<E : EntityState> {
+
+    }
+
 }
