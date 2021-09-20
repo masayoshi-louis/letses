@@ -21,7 +21,6 @@ import io.github.shinigami.coroutineTracingApi.ActiveSpan
 import io.github.shinigami.coroutineTracingApi.injectTracing
 import io.github.shinigami.coroutineTracingApi.span
 import io.opentracing.Span
-import io.opentracing.noop.NoopSpan
 import io.opentracing.util.GlobalTracer
 import io.streamnative.pulsar.tracing.TracingPulsarUtils
 import kotlinx.coroutines.CoroutineScope
@@ -44,13 +43,8 @@ suspend inline fun <T> injectTracing(
     }
     if (spanContext != null) {
         injectTracing(GlobalTracer.get(), {
-            val span = span(operationName) {
+            span(operationName) {
                 asChildOf(spanContext)
-            }
-            if (span is NoopSpan) {
-                null
-            } else {
-                span
             }
         }) {
             handle(msg)
