@@ -18,8 +18,46 @@
 package org.letses.utils.tracing
 
 import io.github.shinigami.coroutineTracingApi.ActiveSpan
+import io.github.shinigami.coroutineTracingApi.injectTracing
+import io.github.shinigami.coroutineTracingApi.span
 import io.opentracing.Span
+import io.opentracing.noop.NoopSpan
+import io.opentracing.util.GlobalTracer
+import io.streamnative.pulsar.tracing.TracingPulsarUtils
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.coroutineScope
+import org.apache.pulsar.client.api.Message
 
 val CoroutineScope.span: Span?
     get() = coroutineContext[ActiveSpan]?.span
+
+suspend inline fun <T> injectTracing(
+    msg: Message<T>,
+    tracingEnabled: Boolean = true,
+    operationName: String = "handleMsg",
+    crossinline handle: suspend CoroutineScope.(Message<T>) -> Unit
+) {
+    val spanContext = if (tracingEnabled) {
+        TracingPulsarUtils.extractSpanContext(msg, GlobalTracer.get())
+    } else {
+        null
+    }
+    if (spanContext != null) {
+        injectTracing(GlobalTracer.get(), {
+            val span = span(operationName) {
+                asChildOf(spanContext)
+            }
+            if (span is NoopSpan) {
+                null
+            } else {
+                span
+            }
+        }) {
+            handle(msg)
+        }
+    } else {
+        coroutineScope {
+            handle(msg)
+        }
+    }
+}

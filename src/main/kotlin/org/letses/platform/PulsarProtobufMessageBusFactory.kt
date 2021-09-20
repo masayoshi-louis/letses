@@ -18,17 +18,16 @@
 package org.letses.platform
 
 import com.google.protobuf.GeneratedMessageV3
-import io.github.shinigami.coroutineTracingApi.injectTracing
-import io.github.shinigami.coroutineTracingApi.span
-import io.opentracing.util.GlobalTracer
 import io.streamnative.pulsar.tracing.TracingConsumerInterceptor
-import io.streamnative.pulsar.tracing.TracingPulsarUtils
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.*
 import kotlinx.coroutines.future.await
-import org.apache.pulsar.client.api.*
+import org.apache.pulsar.client.api.PulsarClient
+import org.apache.pulsar.client.api.Schema
+import org.apache.pulsar.client.api.SubscriptionInitialPosition
+import org.apache.pulsar.client.api.SubscriptionType
 import org.letses.command.CommandHandler
 import org.letses.domain.AggregateModel
 import org.letses.domain.AggregateType
@@ -47,6 +46,7 @@ import org.letses.saga.SagaEvent
 import org.letses.saga.Trigger
 import org.letses.utils.Defer
 import org.letses.utils.awaitNoCancel
+import org.letses.utils.tracing.injectTracing
 import org.letses.utils.tracing.span
 import org.slf4j.LoggerFactory
 import kotlin.coroutines.CoroutineContext
@@ -184,7 +184,7 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
 
                                     while (isActive) {
                                         val msg = consumer.receiveAsync().await()
-                                        tracingFrom(msg) {
+                                        injectTracing(msg, tracingEnabled) {
                                             try {
                                                 val cmd = PulsarProtobufCommandProtocol.decode(
                                                     msg.key,
@@ -249,7 +249,7 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
 
                             while (isActive) {
                                 val msg = consumer.receiveAsync().await()
-                                tracingFrom(msg) {
+                                injectTracing(msg, tracingEnabled) {
                                     try {
                                         val event = PulsarProtobufEventProtocol.decode(
                                             msg.key,
@@ -307,30 +307,6 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
         val topic = fullTopic.substring(delimiterIdx + 1)
         val schemas = schemas[ch] ?: throw Exception("no schemas for channel: $ch, please check the configuration")
         return schemas[topic] ?: throw Exception("no schemas for topic: $topic in $ch, please check the configuration")
-    }
-
-    private suspend inline fun <T> tracingFrom(
-        msg: Message<T>,
-        crossinline handle: suspend CoroutineScope.(Message<T>) -> Unit
-    ) {
-        val spanContext = if (tracingEnabled) {
-            TracingPulsarUtils.extractSpanContext(msg, GlobalTracer.get())
-        } else {
-            null
-        }
-        if (spanContext != null) {
-            injectTracing(GlobalTracer.get(), {
-                span("handleMsg") {
-                    asChildOf(spanContext)
-                }
-            }) {
-                handle(msg)
-            }
-        } else {
-            coroutineScope {
-                handle(msg)
-            }
-        }
     }
 
 }
