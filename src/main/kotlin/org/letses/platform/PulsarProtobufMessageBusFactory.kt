@@ -190,9 +190,11 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
                                                     msg.key,
                                                     PayloadAndHeaders(msg.properties, msg.value)
                                                 )
+                                                span?.log("MessageBus.decoded")
                                                 cmdHandler.handle(cmd)
-                                                span?.log("beginAck")
+                                                span?.log("MessageBus.processFinished")
                                                 consumer.acknowledgeAsync(msg).awaitNoCancel()
+                                                span?.log("MessageBus.messageAcknowledged")
                                             } catch (e: Exception) {
                                                 log.error("error processing command: $msg", e)
                                                 consumer.negativeAcknowledge(msg)
@@ -253,13 +255,15 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
                                             msg.key,
                                             PayloadAndHeaders(msg.properties, msg.value)
                                         )
+                                        span?.log("MessageBus.decoded")
                                         aggregate.processForeignEvent(
                                             event,
                                             RetryControl.create { consumer.negativeAcknowledge(msg) },
                                             cmdHandler::handle
                                         )
-                                        span?.log("beginAck")
+                                        span?.log("MessageBus.processFinished")
                                         consumer.acknowledgeAsync(msg).awaitNoCancel()
+                                        span?.log("MessageBus.messageAcknowledged")
                                     } catch (e: Exception) {
                                         log.error("error processing event: $msg", e)
                                         consumer.negativeAcknowledge(msg)

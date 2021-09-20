@@ -17,4 +17,11 @@
 
 package org.letses.domain
 
-object EmptyAggregateMsgHandlerContext : AggregateMsgHandlerContext
+import io.opentracing.Span
+import kotlinx.coroutines.CoroutineScope
+import org.letses.utils.tracing.span
+
+class CoroutineAggregateMsgHandlerContext(private val scope: CoroutineScope) : AggregateMsgHandlerContext {
+    override val span: Span?
+        get() = scope.span
+}

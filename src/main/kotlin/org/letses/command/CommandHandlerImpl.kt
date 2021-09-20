@@ -17,10 +17,11 @@
 
 package org.letses.command
 
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import org.letses.domain.AggregateModel
 import org.letses.domain.AggregateMsgHandlerContext
-import org.letses.domain.EmptyAggregateMsgHandlerContext
+import org.letses.domain.CoroutineAggregateMsgHandlerContext
 import org.letses.entity.AutoInitialize
 import org.letses.entity.EntityState
 import org.letses.eventsourcing.AnyVersion
@@ -64,44 +65,45 @@ internal class CommandHandlerImpl<S : EntityState, E : Event>(
         }
     }
 
-    private suspend fun doTxn(envelope: CommandEnvelope): Transaction<S, E, AggregateMsgHandlerContext> {
-        val h = envelope.heading
-        log.debug("<${h.correlationId}> processing command ${envelope.payload::class.simpleName}(${h.commandId})")
-        val txSettings = TransactionSettings(
-            partitionKey = h.partitionKey,
-            entityId = h.targetId,
-            correlationId = h.correlationId,
-            msgIdExtractor = { h.commandId },
-            deduplicationMemSize = deduplicationMemSize,
-            enhanceHeading = {
-                if (h.sagaContext == null) it
-                else it.toBasic().copy(sagaContext = h.sagaContext)
+    private suspend fun doTxn(envelope: CommandEnvelope): Transaction<S, E, AggregateMsgHandlerContext> =
+        coroutineScope {
+            val h = envelope.heading
+            log.debug("<${h.correlationId}> processing command ${envelope.payload::class.simpleName}(${h.commandId})")
+            val txSettings = TransactionSettings(
+                partitionKey = h.partitionKey,
+                entityId = h.targetId,
+                correlationId = h.correlationId,
+                msgIdExtractor = { h.commandId },
+                deduplicationMemSize = deduplicationMemSize,
+                enhanceHeading = {
+                    if (h.sagaContext == null) it
+                    else it.toBasic().copy(sagaContext = h.sagaContext)
+                }
+            )
+            val tx = repo.beginTransaction(txSettings)
+            if (h.expectedVersion != AnyVersion) {
+                tx.checkVersion(h.expectedVersion)
             }
-        )
-        val tx = repo.beginTransaction(txSettings)
-        if (h.expectedVersion != AnyVersion) {
-            tx.checkVersion(h.expectedVersion)
+            val isInitMsg = model.isInitialMessage(envelope.payload)
+            when {
+                !tx.isEntityExists && autoInitialize != null -> {
+                    tx.handleMsg(autoInitialize.initMsg(h.targetId), CoroutineAggregateMsgHandlerContext(this))
+                }
+                !tx.isEntityExists && !isInitMsg -> {
+                    throw NotInitializedException()
+                }
+                tx.isEntityExists && isInitMsg -> {
+                    throw AlreadyInitializedException()
+                }
+            }
+            tx.handleMsg(envelope.payload, CoroutineAggregateMsgHandlerContext(this))
+            try {
+                tx.commit()
+                tx
+            } catch (_: ConcurrentModificationException) {
+                delay(100)
+                doTxn(envelope) // retry
+            }
         }
-        val isInitMsg = model.isInitialMessage(envelope.payload)
-        when {
-            !tx.isEntityExists && autoInitialize != null -> {
-                tx.handleMsg(autoInitialize.initMsg(h.targetId), EmptyAggregateMsgHandlerContext)
-            }
-            !tx.isEntityExists && !isInitMsg -> {
-                throw NotInitializedException()
-            }
-            tx.isEntityExists && isInitMsg -> {
-                throw AlreadyInitializedException()
-            }
-        }
-        tx.handleMsg(envelope.payload, EmptyAggregateMsgHandlerContext)
-        return try {
-            tx.commit()
-            tx
-        } catch (_: ConcurrentModificationException) {
-            delay(100)
-            doTxn(envelope) // retry
-        }
-    }
 
 }

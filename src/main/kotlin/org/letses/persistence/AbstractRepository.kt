@@ -17,6 +17,7 @@
 
 package org.letses.persistence
 
+import kotlinx.coroutines.coroutineScope
 import org.letses.entity.EntityState
 import org.letses.eventsourcing.EventSourced
 import org.letses.eventsourcing.EventVersion
@@ -24,6 +25,7 @@ import org.letses.messaging.Event
 import org.letses.messaging.EventHeading
 import org.letses.persistence.publisher.EventPublisher
 import org.letses.platform.MsgHandlerContext
+import org.letses.utils.tracing.span
 import org.slf4j.LoggerFactory
 import java.io.Closeable
 
@@ -59,43 +61,51 @@ abstract class AbstractRepository<S : EntityState, E : Event, in C : MsgHandlerC
 
         private var prevSnapshot: Snapshot<S>? = null
 
-        override suspend fun saveEvents(events: List<PersistentEventEnvelope<E>>, expectedVersion: EventVersion) {
-            eventStore.append(streamName(entityId), events, expectedVersion)
-        }
+        override suspend fun saveEvents(events: List<PersistentEventEnvelope<E>>, expectedVersion: EventVersion): Unit =
+            coroutineScope {
+                eventStore.append(streamName(entityId), events, expectedVersion)
+                span?.log("Repository.Transaction.eventsSaved")
+            }
 
-        override suspend fun saveSnapshot(takeSnapshot: () -> Snapshot<S>) {
+        override suspend fun saveSnapshot(takeSnapshot: () -> Snapshot<S>): Unit = coroutineScope {
             snapshotStore?.let { ss ->
                 ss.save(entityId, version, prevSnapshot, takeSnapshot)?.let { s ->
                     prevSnapshot = s
+                    span?.log("Repository.Transaction.snapshotSaved")
                     log.debug("<$correlationId>[${model.eventCategory}_$entityId] snapshot saved, ver=${s.version}")
                 }
             }
         }
 
         @Suppress("NAME_SHADOWING")
-        override suspend fun publishEvents(events: () -> List<PersistentEventEnvelope<E>>) {
+        override suspend fun publishEvents(events: () -> List<PersistentEventEnvelope<E>>): Unit = coroutineScope {
             eventPublisher?.run {
                 val events = events()
                 try {
                     publish(events)
+                    span?.log("Repository.Transaction.eventsPublished")
                     (eventStore as? PassiveEventStore)?.markEventsAsPublished(
                         streamName(entityId),
                         events.minOf { it.heading.version },
                         events.maxOf { it.heading.version }
                     )
+                    span?.log("Repository.Transaction.eventsMarkedAsPublished")
                 } catch (e: Exception) {
                     log.error("Publish events failed", e)
                 }
             }
         }
 
-        suspend fun begin() {
+        suspend fun begin() = coroutineScope {
+            span?.log("Repository.Transaction.begin")
             snapshotStore?.load(entityId)?.let { s ->
                 loadSnapshot(s)
+                span?.log("Repository.Transaction.snapshotLoaded")
                 prevSnapshot = s
                 log.debug("<$correlationId>[${model.eventCategory}_$entityId] snapshot loaded, ver=${s.version}")
             }
             eventStore.read(streamName(entityId), version + 1, ::applyEvent)
+            span?.log("Repository.Transaction.eventsLoaded")
         }
 
     }

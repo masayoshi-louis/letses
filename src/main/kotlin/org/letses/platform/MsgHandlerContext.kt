@@ -17,10 +17,13 @@
 
 package org.letses.platform
 
+import io.opentracing.Span
+
 /**
  * Provide additional information and operations for message handle.
  *
  * Mainly used in sagas. @see org.letses.saga.SagaMsgHandlerContext SagaMsgHandlerContext.
  */
 interface MsgHandlerContext {
+    val span: Span? get() = null
 }

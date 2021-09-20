@@ -21,6 +21,7 @@ import arrow.core.identity
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
+import kotlinx.coroutines.coroutineScope
 import org.letses.entity.EntityState
 import org.letses.entity.StandardEntityState
 import org.letses.eventsourcing.EventSourced
@@ -30,6 +31,7 @@ import org.letses.eventsourcing.ProduceExtraEventHeaders
 import org.letses.messaging.*
 import org.letses.platform.MsgHandlerContext
 import org.letses.utils.newUUID
+import org.letses.utils.tracing.span
 import org.slf4j.LoggerFactory
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
@@ -112,21 +114,23 @@ abstract class AbstractTransaction<S : EntityState, E : Event, in C : MsgHandler
 
     override val isEntityExists get() = version != NotExists
 
-    override suspend fun commit(): List<PersistentEventEnvelope<E>> {
+    override suspend fun commit(): List<PersistentEventEnvelope<E>> = coroutineScope {
+        span?.log("Repository.Transaction.commit")
         val ret = pendingEvents
         if (pendingEvents.isNotEmpty()) {
             consistentSnapshotTxManager.atomic {
                 saveEvents(pendingEvents, version - pendingEvents.size)
                 committedEvents = pendingEvents
                 pendingEvents = persistentListOf()
-                saveSnapshot(this::taskSnapshot)
+                saveSnapshot(::taskSnapshot)
             }
             log.debug("<$correlationId>[${model.eventCategory}_$entityId] committed, ${ret.size} event(s) saved")
-            publishEvents(this::lastCommittedEvents)
+            publishEvents(::lastCommittedEvents)
         } else {
             log.debug("<$correlationId>[${model.eventCategory}_$entityId] committed, no new event")
         }
-        return ret
+        span?.log("Repository.Transaction.committed")
+        ret
     }
 
     override fun lastCommittedEvents(): List<PersistentEventEnvelope<E>> = this.committedEvents ?: persistentListOf()
@@ -158,6 +162,7 @@ abstract class AbstractTransaction<S : EntityState, E : Event, in C : MsgHandler
             applyEvent(pe)
             pendingEvents = pendingEvents.add(pe)
             // log
+            ctx.span?.log("Repository.Transaction.eventsGenerated")
             if (log.isDebugEnabled) {
                 val eCls = if (e is WrappedProtobufEvent) {
                     e.message::class.java
