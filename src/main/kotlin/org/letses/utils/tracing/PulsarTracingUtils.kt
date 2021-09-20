@@ -17,14 +17,13 @@
 
 package org.letses.utils.tracing
 
-import io.github.shinigami.coroutineTracingApi.ActiveSpan
 import io.opentracing.util.GlobalTracer
 import io.streamnative.pulsar.tracing.TypeMessageBuilderInjectAdapter
 import kotlinx.coroutines.CoroutineScope
 import org.apache.pulsar.client.api.TypedMessageBuilder
 
 fun <T> CoroutineScope.injectTracingTo(message: TypedMessageBuilder<T>) {
-    coroutineContext[ActiveSpan]?.span?.context()?.let { ctx ->
+    span?.context()?.let { ctx ->
         GlobalTracer.get()
             .inject(
                 ctx,

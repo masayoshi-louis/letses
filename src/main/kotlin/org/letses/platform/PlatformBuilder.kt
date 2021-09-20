@@ -18,6 +18,8 @@
 package org.letses.platform
 
 import org.letses.command.CommandHandlerImpl
+import org.letses.command.CommandHandlerWithEntityState
+import org.letses.command.TracedCommandHandlerImpl
 import org.letses.domain.AggregateModel
 import org.letses.domain.EventSourcedAggregate
 import org.letses.entity.EntityState
@@ -32,9 +34,11 @@ import org.letses.saga.SagaEvent
 import org.letses.saga.Trigger
 
 class PlatformBuilder {
+    // Configs
     lateinit var boundedContextName: String
     lateinit var messageBusFactory: MessageBusFactory
     var consistentSnapshotTxManager: ConsistentSnapshotTxManager = ConsistentSnapshotTxManager.PSEUDO
+    var tracingEnabled: Boolean = false
 
     private val aggregates: MutableList<AggregateBuilder<*, *>> = mutableListOf()
     private val sagas: MutableList<SagaBuilder<*, *>> = mutableListOf()
@@ -81,11 +85,14 @@ class PlatformBuilder {
         }
         val aCommandHandlers = aRepositories.associate { (type, repo) ->
             val aggregateModel = aggregateMap[type]!!
-            val h = CommandHandlerImpl(
+            var h: CommandHandlerWithEntityState<*, *> = CommandHandlerImpl(
                 model = aggregateModel as AggregateModel<EntityState, Event>,
                 repo = repo,
                 deduplicationMemSize = aggregateModel.deduplicationMemSize
             )
+            if (tracingEnabled) {
+                h = TracedCommandHandlerImpl(h)
+            }
             type to h
         }
 

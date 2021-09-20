@@ -55,3 +55,5 @@ suspend inline fun <T> injectTracing(
         }
     }
 }
+
+val CoroutineScope.traced: Boolean get() = coroutineContext[ActiveSpan] != null
