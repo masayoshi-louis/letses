@@ -68,7 +68,9 @@ object PulsarProtobufEventProtocol :
                     IGNORE_HEADER_TRACE_ID -> {
                         // ignore
                     }
-                    else -> extra = extra.put(k, v)
+                    else -> if (!k.lowercase().startsWith("x-b3")) {
+                        extra = extra.put(k, v)
+                    }
                 }
             }
         }
