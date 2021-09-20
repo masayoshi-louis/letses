@@ -18,15 +18,17 @@
 package org.letses.platform
 
 import com.google.protobuf.GeneratedMessageV3
+import io.github.shinigami.coroutineTracingApi.injectTracing
+import io.github.shinigami.coroutineTracingApi.span
+import io.opentracing.util.GlobalTracer
+import io.streamnative.pulsar.tracing.TracingConsumerInterceptor
+import io.streamnative.pulsar.tracing.TracingPulsarUtils
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.*
 import kotlinx.coroutines.future.await
-import org.apache.pulsar.client.api.PulsarClient
-import org.apache.pulsar.client.api.Schema
-import org.apache.pulsar.client.api.SubscriptionInitialPosition
-import org.apache.pulsar.client.api.SubscriptionType
+import org.apache.pulsar.client.api.*
 import org.letses.command.CommandHandler
 import org.letses.domain.AggregateModel
 import org.letses.domain.AggregateType
@@ -45,6 +47,7 @@ import org.letses.saga.SagaEvent
 import org.letses.saga.Trigger
 import org.letses.utils.Defer
 import org.letses.utils.awaitNoCancel
+import org.letses.utils.tracing.span
 import org.slf4j.LoggerFactory
 import kotlin.coroutines.CoroutineContext
 import kotlin.reflect.KClass
@@ -62,6 +65,8 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
     var channelMapper: ChannelMapper = ChannelMapper.NOOP
 
     var useTxn: Boolean = false
+
+    var tracingEnabled: Boolean = false
 
     var commandListenerEnabled: Boolean = true
     var eventListenerEnabled: Boolean = true
@@ -129,6 +134,7 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
             pulsarClient,
             EventTransform.pulsarProtobufSagaTransform(),
             useTxn,
+            tracingEnabled,
             channelMapper
         ),
         schemas,
@@ -161,6 +167,11 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
                                     .topic(topic)
                                     .subscriptionName(subName)
                                     .subscriptionType(SubscriptionType.Key_Shared)
+                                    .apply {
+                                        if (tracingEnabled) {
+                                            intercept(TracingConsumerInterceptor())
+                                        }
+                                    }
                                     .subscribeAsync()
                                     .await()
                                 log.info("Pulsar consumer started, topic=$topic, subscriptionName=$subName")
@@ -173,16 +184,19 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
 
                                     while (isActive) {
                                         val msg = consumer.receiveAsync().await()
-                                        try {
-                                            val cmd = PulsarProtobufCommandProtocol.decode(
-                                                msg.key,
-                                                PayloadAndHeaders(msg.properties, msg.value)
-                                            )
-                                            cmdHandler.handle(cmd)
-                                            consumer.acknowledgeAsync(msg).awaitNoCancel()
-                                        } catch (e: Exception) {
-                                            log.error("error processing command: $msg", e)
-                                            consumer.negativeAcknowledge(msg)
+                                        tracingFrom(msg) {
+                                            try {
+                                                val cmd = PulsarProtobufCommandProtocol.decode(
+                                                    msg.key,
+                                                    PayloadAndHeaders(msg.properties, msg.value)
+                                                )
+                                                cmdHandler.handle(cmd)
+                                                span?.log("beginAck")
+                                                consumer.acknowledgeAsync(msg).awaitNoCancel()
+                                            } catch (e: Exception) {
+                                                log.error("error processing command: $msg", e)
+                                                consumer.negativeAcknowledge(msg)
+                                            }
                                         }
                                     }
                                 }
@@ -216,9 +230,15 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
                             .subscriptionName(subName)
                             .subscriptionType(SubscriptionType.Key_Shared)
                             .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
+                            .apply {
+                                if (tracingEnabled) {
+                                    intercept(TracingConsumerInterceptor())
+                                }
+                            }
                             .subscribeAsync()
                             .await()
                         log.info("Pulsar consumer started, topic=$finalTopic, subscriptionName=$subName")
+
                         Defer.scope {
                             defer {
                                 consumer.closeAsync().await()
@@ -227,20 +247,23 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
 
                             while (isActive) {
                                 val msg = consumer.receiveAsync().await()
-                                try {
-                                    val event = PulsarProtobufEventProtocol.decode(
-                                        msg.key,
-                                        PayloadAndHeaders(msg.properties, msg.value)
-                                    )
-                                    aggregate.processForeignEvent(
-                                        event,
-                                        RetryControl.create { consumer.negativeAcknowledge(msg) },
-                                        cmdHandler::handle
-                                    )
-                                    consumer.acknowledgeAsync(msg).awaitNoCancel()
-                                } catch (e: Exception) {
-                                    log.error("error processing event: $msg", e)
-                                    consumer.negativeAcknowledge(msg)
+                                tracingFrom(msg) {
+                                    try {
+                                        val event = PulsarProtobufEventProtocol.decode(
+                                            msg.key,
+                                            PayloadAndHeaders(msg.properties, msg.value)
+                                        )
+                                        aggregate.processForeignEvent(
+                                            event,
+                                            RetryControl.create { consumer.negativeAcknowledge(msg) },
+                                            cmdHandler::handle
+                                        )
+                                        span?.log("beginAck")
+                                        consumer.acknowledgeAsync(msg).awaitNoCancel()
+                                    } catch (e: Exception) {
+                                        log.error("error processing event: $msg", e)
+                                        consumer.negativeAcknowledge(msg)
+                                    }
                                 }
                             }
                         }
@@ -265,6 +288,7 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
             pulsarClient,
             EventTransform.pulsarProtobufTransform(aggregate.eventChannel),
             useTxn,
+            tracingEnabled,
             channelMapper
         ) as EventPublisher<E>
 
@@ -279,6 +303,30 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
         val topic = fullTopic.substring(delimiterIdx + 1)
         val schemas = schemas[ch] ?: throw Exception("no schemas for channel: $ch, please check the configuration")
         return schemas[topic] ?: throw Exception("no schemas for topic: $topic in $ch, please check the configuration")
+    }
+
+    private suspend inline fun <T> tracingFrom(
+        msg: Message<T>,
+        crossinline handle: suspend CoroutineScope.(Message<T>) -> Unit
+    ) {
+        val spanContext = if (tracingEnabled) {
+            TracingPulsarUtils.extractSpanContext(msg, GlobalTracer.get())
+        } else {
+            null
+        }
+        if (spanContext != null) {
+            injectTracing(GlobalTracer.get(), {
+                span("handleMsg") {
+                    asChildOf(spanContext)
+                }
+            }) {
+                handle(msg)
+            }
+        } else {
+            coroutineScope {
+                handle(msg)
+            }
+        }
     }
 
 }

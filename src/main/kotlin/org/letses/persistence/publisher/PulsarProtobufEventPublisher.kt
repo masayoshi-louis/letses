@@ -18,6 +18,8 @@
 package org.letses.persistence.publisher
 
 import com.google.protobuf.GeneratedMessageV3
+import io.streamnative.pulsar.tracing.TracingProducerInterceptor
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.future.await
 import org.apache.pulsar.client.api.Producer
 import org.apache.pulsar.client.api.PulsarClient
@@ -26,6 +28,7 @@ import org.letses.messaging.ChannelMapper
 import org.letses.messaging.Event
 import org.letses.messaging.PayloadAndHeaders
 import org.letses.persistence.PersistentEventEnvelope
+import org.letses.utils.tracing.injectTracingTo
 import org.slf4j.LoggerFactory
 import java.io.Closeable
 import java.util.concurrent.ConcurrentHashMap
@@ -35,6 +38,7 @@ class PulsarProtobufEventPublisher<E : Event>(
     private val pulsarClient: PulsarClient,
     private val transform: EventTransformFn<E, PayloadAndHeaders<out GeneratedMessageV3>>,
     private val useTxn: Boolean,
+    private val tracingEnabled: Boolean,
     private val channelMapper: ChannelMapper
 ) : EventPublisher<E>, Closeable {
     companion object {
@@ -44,7 +48,7 @@ class PulsarProtobufEventPublisher<E : Event>(
     private val producers = ConcurrentHashMap<String, Producer<in GeneratedMessageV3>>()
 
     @Suppress("UNCHECKED_CAST", "BlockingMethodInNonBlockingContext")
-    override suspend fun publish(events: List<PersistentEventEnvelope<E>>) {
+    override suspend fun publish(events: List<PersistentEventEnvelope<E>>) = coroutineScope {
         val txn = if (useTxn) {
             pulsarClient.newTransaction().build().await()
         } else {
@@ -58,12 +62,20 @@ class PulsarProtobufEventPublisher<E : Event>(
                     pulsarClient.newProducer(Schema.PROTOBUF(value.payload::class.java))
                         .topic(finalTopic)
                         .sendTimeout(0, TimeUnit.SECONDS)
+                        .apply {
+                            if (tracingEnabled) {
+                                intercept(TracingProducerInterceptor())
+                            }
+                        }
                         .create() as Producer<in GeneratedMessageV3>
                 }
                 val message = if (txn == null) {
                     producer.newMessage()
                 } else {
                     producer.newMessage(txn)
+                }
+                if (tracingEnabled) {
+                    injectTracingTo(message)
                 }
                 key?.let { message.key(it) }
                 message.properties(value.headers).value(value.payload).sendAsync()

@@ -33,6 +33,8 @@ object PulsarProtobufEventProtocol :
     private const val HEADER_PARTITION_KEY = "Part-Key"
     private const val HEADER_SAGA_CONTEXT = "Saga-Ctx"
 
+    private const val IGNORE_HEADER_TRACE_ID = "uber-trace-id"
+
     override fun encode(e: EventEnvelope<WrappedProtobufEvent>): PayloadAndHeaders<out GeneratedMessageV3> {
         val headers = mutableMapOf(
             HEADER_SOURCE_ID to e.heading.sourceId,
@@ -63,6 +65,9 @@ object PulsarProtobufEventProtocol :
                     HEADER_TIMESTAMP -> timestamp = Instant.parse(v)
                     HEADER_PARTITION_KEY -> partitionKey = v
                     HEADER_SAGA_CONTEXT -> sagaContext = v
+                    IGNORE_HEADER_TRACE_ID -> {
+                        // ignore
+                    }
                     else -> extra = extra.put(k, v)
                 }
             }

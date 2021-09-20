@@ -172,6 +172,27 @@
             <scope>import</scope>
         </dependency>
         <dependency>
+            <groupId>io.opentracing</groupId>
+            <artifactId>opentracing-api</artifactId>
+            <version>0.33.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.opentracing</groupId>
+            <artifactId>opentracing-util</artifactId>
+            <version>0.33.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.shinigami072</groupId>
+            <artifactId>coroutine-tracing-api-core</artifactId>
+            <version>0.2.1</version>
+        </dependency>
+        <dependency>
+            <groupId>io.streamnative.pulsar.tracing</groupId>
+            <artifactId>opentracing-pulsar-client</artifactId>
+            <version>0.1.0</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
             <groupId>com.squareup</groupId>
             <artifactId>kotlinpoet</artifactId>
             <version>0.6.0</version>
