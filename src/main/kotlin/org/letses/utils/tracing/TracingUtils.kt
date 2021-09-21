@@ -26,6 +26,7 @@ import io.streamnative.pulsar.tracing.TracingPulsarUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import org.apache.pulsar.client.api.Message
+import org.letses.utils.newUUID
 
 val CoroutineScope.span: Span?
     get() = coroutineContext[ActiveSpan]?.span
@@ -57,3 +58,5 @@ suspend inline fun <T> injectTracing(
 }
 
 val CoroutineScope.traced: Boolean get() = coroutineContext[ActiveSpan] != null
+
+fun CoroutineScope.traceIdOrRandom(): String = span?.context()?.toTraceId() ?: newUUID()

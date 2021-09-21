@@ -17,10 +17,12 @@
 
 package org.letses.command
 
+import kotlinx.coroutines.CoroutineScope
 import org.letses.eventsourcing.AnyVersion
 import org.letses.eventsourcing.EventVersion
 import org.letses.messaging.EventEnvelope
 import org.letses.utils.newUUID
+import org.letses.utils.tracing.traceIdOrRandom
 import java.time.Instant
 
 data class BasicCommandHeading(
@@ -52,3 +54,9 @@ fun CommandHeading.toBasic(): BasicCommandHeading = this as? BasicCommandHeading
     sagaContext = sagaContext,
     expectedVersion = expectedVersion
 )
+
+fun CoroutineScope.commandHeading(targetId: String, correlationId: String = traceIdOrRandom()): BasicCommandHeading =
+    BasicCommandHeading(
+        targetId,
+        correlationId = correlationId
+    )
