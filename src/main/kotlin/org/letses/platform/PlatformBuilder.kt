@@ -85,13 +85,13 @@ class PlatformBuilder {
         }
         val aCommandHandlers = aRepositories.associate { (type, repo) ->
             val aggregateModel = aggregateMap[type]!!
-            var h: CommandHandlerWithEntityState<*, *> = CommandHandlerImpl(
+            var h: CommandHandlerWithEntityState<EntityState, Event> = CommandHandlerImpl(
                 model = aggregateModel as AggregateModel<EntityState, Event>,
                 repo = repo,
                 deduplicationMemSize = aggregateModel.deduplicationMemSize
             )
             if (tracingEnabled) {
-                h = TracedCommandHandlerImpl(h)
+                h = TracedCommandHandlerImpl(aggregateModel, h)
             }
             type to h
         }
