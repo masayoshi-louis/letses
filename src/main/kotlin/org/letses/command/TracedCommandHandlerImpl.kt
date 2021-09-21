@@ -31,22 +31,22 @@ class TracedCommandHandlerImpl<S : EntityState, E : Event>(
 
     override suspend fun handle(envelope: CommandEnvelope): EventEnvelope<E>? = coroutineScope {
         if (traced) {
-            inner.handle(envelope)
-        } else {
             withTrace("handleCommand") {
                 inner.handle(envelope)
             }
+        } else {
+            inner.handle(envelope)
         }
     }
 
     override suspend fun handleCommandReturningState(envelope: CommandEnvelope): Pair<EventEnvelope<E>?, S> =
         coroutineScope {
             if (traced) {
-                inner.handleCommandReturningState(envelope)
-            } else {
                 withTrace("handleCommand") {
                     inner.handleCommandReturningState(envelope)
                 }
+            } else {
+                inner.handleCommandReturningState(envelope)
             }
         }
 
