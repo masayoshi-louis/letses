@@ -29,13 +29,14 @@ import org.letses.utils.tracing.traced
 
 
 class TracedCommandHandlerImpl<S : EntityState, E : Event>(
+    private val boundedContextName: String,
     private val model: AggregateModel<S, E>,
     private val inner: CommandHandlerWithEntityState<S, E>
 ) : CommandHandler<E> by inner, CommandHandlerWithEntityState<S, E> {
 
     companion object {
+        const val TAG_COMPONENT = "component"
         const val TAG_AGGREGATE_TYPE = "aggregate.type"
-        const val TAG_AGGREGATE_NAME = "aggregate.name"
         const val TAG_AGGREGATE_ID = "aggregate.id"
         const val TAG_MSG_ID = "message.id"
         const val TAG_MSG_ENVELOPE_TYPE = "message.envelopeType"
@@ -68,7 +69,7 @@ class TracedCommandHandlerImpl<S : EntityState, E : Event>(
         }
 
     private fun CoroutineScope.tagSpan(envelope: CommandEnvelope) {
-        span?.setTag(TAG_AGGREGATE_NAME, model.type.name)
+        span?.setTag(TAG_COMPONENT, "$boundedContextName/${model.type.name}")
         span?.setTag(TAG_AGGREGATE_TYPE, model::class.qualifiedName)
         span?.setTag(TAG_AGGREGATE_ID, envelope.heading.targetId)
         span?.setTag(TAG_MSG_ID, envelope.heading.commandId)

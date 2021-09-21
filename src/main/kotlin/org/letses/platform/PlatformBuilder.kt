@@ -91,7 +91,7 @@ class PlatformBuilder {
                 deduplicationMemSize = aggregateModel.deduplicationMemSize
             )
             if (tracingEnabled) {
-                h = TracedCommandHandlerImpl(aggregateModel, h)
+                h = TracedCommandHandlerImpl(boundedContextName, aggregateModel, h)
             }
             type to h
         }
