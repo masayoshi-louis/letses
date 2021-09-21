@@ -17,8 +17,10 @@
 
 package org.letses.persistence
 
+import io.r2dbc.spi.R2dbcRollbackException
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kotlinx.coroutines.reactor.mono
+import org.slf4j.LoggerFactory
 import org.springframework.transaction.ReactiveTransactionManager
 import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.reactive.TransactionalOperator
@@ -26,6 +28,8 @@ import org.springframework.transaction.reactive.TransactionalOperator
 interface ConsistentSnapshotTxManager {
 
     companion object {
+        private val log = LoggerFactory.getLogger(ConsistentSnapshotTxManager::class.java)
+
         private val springTxDef = object : TransactionDefinition by TransactionDefinition.withDefaults() {
             override fun getPropagationBehavior() = TransactionDefinition.PROPAGATION_REQUIRES_NEW
         }
@@ -38,6 +42,23 @@ interface ConsistentSnapshotTxManager {
                     return mono {
                         block()
                     }.`as`(tx::transactional).awaitSingleOrNull() as R
+                }
+            }
+
+        fun ConsistentSnapshotTxManager.withAutoRetry(errCode: Int = 40001): ConsistentSnapshotTxManager =
+            object : ConsistentSnapshotTxManager {
+                override suspend fun <R> atomic(block: suspend () -> R): R {
+                    while (true) {
+                        try {
+                            return this@withAutoRetry.atomic(block)
+                        } catch (e: R2dbcRollbackException) {
+                            if (e.errorCode == errCode) {
+                                log.info("auto retry, exceptionMsg: ${e.message}")
+                            } else {
+                                throw e
+                            }
+                        }
+                    }
                 }
             }
     }
