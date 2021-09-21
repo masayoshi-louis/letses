@@ -106,8 +106,8 @@ abstract class AbstractRepository<S : EntityState, E : Event, in C : MsgHandlerC
             }
             val eventCount = eventStore.read(streamName(entityId), version + 1, ::applyEvent)
             log.debug("<$correlationId>[${model.eventCategory}_$entityId] $eventCount event(s) replayed")
-            span?.apply {
-                log(mapOf("event" to "Repository.Transaction.eventsLoaded", "num" to eventCount))
+            span?.run {
+                log(mapOf("event" to "Repository.Transaction.eventsReplayed", "numEvents" to eventCount))
             }
         }
 

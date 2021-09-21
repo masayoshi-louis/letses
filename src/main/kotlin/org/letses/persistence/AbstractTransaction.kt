@@ -115,7 +115,9 @@ abstract class AbstractTransaction<S : EntityState, E : Event, in C : MsgHandler
     override val isEntityExists get() = version != NotExists
 
     override suspend fun commit(): List<PersistentEventEnvelope<E>> = coroutineScope {
-        span?.log("Repository.Transaction.commit")
+        span?.run {
+            log(mapOf("event" to "Repository.Transaction.committing", "numEvents" to pendingEvents.size))
+        }
         val ret = pendingEvents
         if (pendingEvents.isNotEmpty()) {
             consistentSnapshotTxManager.atomic {
