@@ -40,8 +40,9 @@ class GesEventStore<E : Event>(
 
     private val log = LoggerFactory.getLogger(GesEventStore::class.java)
 
-    override suspend fun read(stream: String, from: EventVersion, consumer: (PersistentEventEnvelope<E>) -> Unit) {
+    override suspend fun read(stream: String, from: EventVersion, consumer: (PersistentEventEnvelope<E>) -> Unit): Int {
         var fromVar = from
+        var count = 0
         while (true) {
             val resp = gesClient.readStreamEventsForward(streamPrefix + stream, fromVar, readBatchSize, false).await()
             if (resp.status == SliceReadStatus.StreamDeleted || resp.status == SliceReadStatus.StreamNotFound) {
@@ -52,6 +53,7 @@ class GesEventStore<E : Event>(
                 if (!oe.isJson) throw AssertionError()
                 val json = String(oe.data, Charsets.UTF_8)
                 consumer(serDe.deserialize(json, oe.eventType))
+                count += 1
             }
             if (resp.isEndOfStream) {
                 break
@@ -59,6 +61,7 @@ class GesEventStore<E : Event>(
                 fromVar += readBatchSize
             }
         }
+        return count
     }
 
     override suspend fun append(

@@ -32,7 +32,7 @@ interface EventStore<E : Event> {
     /**
      * @param from the earliest version to be read, inclusive
      */
-    suspend fun read(stream: String, from: EventVersion, consumer: (PersistentEventEnvelope<E>) -> Unit)
+    suspend fun read(stream: String, from: EventVersion, consumer: (PersistentEventEnvelope<E>) -> Unit): Int
 
     suspend fun append(stream: String, events: List<PersistentEventEnvelope<E>>, expectedVersion: EventVersion)
 

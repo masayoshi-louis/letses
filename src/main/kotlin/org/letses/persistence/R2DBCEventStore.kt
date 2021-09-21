@@ -55,8 +55,9 @@ class R2DBCEventStore<E : Event>(
         }
     }
 
-    override suspend fun read(stream: String, from: EventVersion, consumer: (PersistentEventEnvelope<E>) -> Unit) {
+    override suspend fun read(stream: String, from: EventVersion, consumer: (PersistentEventEnvelope<E>) -> Unit): Int {
         val entityId = entityIdFromStreamId(stream)
+        var count = 0
         useConnection { conn ->
             conn.createStatement("SELECT * FROM \"$tableName\"\nWHERE source_id = $1\nAND version >= $2\nORDER BY version ASC")
                 .bind(0, entityId)
@@ -85,7 +86,9 @@ class R2DBCEventStore<E : Event>(
                     }
                 }.asFlow().collect {
                     consumer(it)
+                    count += 1
                 }
+            return count
         }
     }
 
