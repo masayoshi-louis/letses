@@ -23,7 +23,7 @@
 
     <groupId>org.letses</groupId>
     <artifactId>letses</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0-SNAPSHOT</version>
     <packaging>jar</packaging>
 
     <name>letses</name>
@@ -322,5 +322,18 @@
 
     <repositories>
     </repositories>
+
+    <distributionManagement>
+        <repository>
+            <id>myMavenRepo.kJd9Vjdl5poChfZjnWxA</id>
+            <url>https://mymavenrepo.com/repo/kJd9Vjdl5poChfZjnWxA/</url>
+            <!-- read: https://mymavenrepo.com/repo/y9FaQPKtqHemJTHwIjhW/ -->
+        </repository>
+        <snapshotRepository>
+            <id>myMavenRepo.kJd9Vjdl5poChfZjnWxA</id>
+            <url>https://mymavenrepo.com/repo/kJd9Vjdl5poChfZjnWxA/</url>
+            <!-- read: https://mymavenrepo.com/repo/y9FaQPKtqHemJTHwIjhW/ -->
+        </snapshotRepository>
+    </distributionManagement>
 
 </project>

@@ -15,13 +15,22 @@
  * limitations under the License.
  */
 
+@file:Suppress("RedundantNullableReturnType")
+
 package org.letses.persistence
 
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableSet
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.persistentSetOf
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import org.letses.entity.ComplexEntityState
 import org.letses.entity.EntityState
+import org.letses.eventsourcing.EventVersion
+import org.letses.eventsourcing.NotExists
 import org.mockito.Mockito
 import kotlin.reflect.KClass
 import kotlin.reflect.KType
@@ -34,8 +43,8 @@ import kotlin.test.assertEquals
 @Suppress("UNCHECKED_CAST")
 class ComplexSnapshotStoreTests {
 
-    data class R(val r: Int) : EntityState() {
-        override val identity: String = r.toString()
+    data class R(val id: String, val r: Int) : EntityState() {
+        override val identity: String = id
     }
 
     data class ChildAR(val ar: String) : EntityState() {
@@ -49,7 +58,7 @@ class ComplexSnapshotStoreTests {
     data class ChildA(
         override val root: ChildAR,
         @ComplexEntityState.Children
-        val childAB: ChildB
+        val childAB: ChildB?
     ) : ComplexEntityState<ChildAR>()
 
     data class C(
@@ -78,9 +87,70 @@ class ComplexSnapshotStoreTests {
         }
 
         val cStoreStores = cStore.stores
-        assertEquals(2, cStoreStores.size)
+        assertEquals(3, cStoreStores.size)
         assertEquals(ChildB::class, (cStoreStores[ChildB::class.createType()] as TestStore<*>).kcls)
+        assertEquals(ChildB::class, (cStoreStores[ChildB::class.createType(nullable = true)] as TestStore<*>).kcls)
         assertEquals(ChildAR::class, (cStoreStores[ChildAR::class.createType()] as TestStore<*>).kcls)
+    }
+
+    @Test
+    fun testSaveAndLoad() {
+        val rStore = object : SnapshotStore<R> {
+            val map = mutableMapOf<String, Snapshot<R>>()
+
+            override suspend fun save(
+                entityId: String,
+                version: EventVersion,
+                prevSnapshot: Snapshot<R>?,
+                takeSnapshot: () -> Snapshot<R>
+            ): Snapshot<R>? {
+                return takeSnapshot().also {
+                    map[entityId] = it
+                }
+            }
+
+            override suspend fun load(entityId: String): Snapshot<R>? {
+                return map[entityId]
+            }
+        }
+
+        val childStore = mutableMapOf<Pair<KType, String>, List<EntityState>>()
+        val cStore = ComplexSnapshotStore(C::class, rStore) { ktype ->
+            object : SnapshotStore.ChildEntityStore<EntityState> {
+                override suspend fun save(parentId: String, state: EntityState) {
+                    childStore[ktype to parentId] = listOf(state)
+                }
+
+                override suspend fun saveAll(parentId: String, collection: Collection<EntityState>) {
+                    childStore[ktype to parentId] = collection.toList()
+                }
+
+                override fun loadBy(parentId: String): Flow<EntityState> {
+                    val list: List<EntityState> = childStore[ktype to parentId] ?: emptyList()
+                    return list.asFlow()
+                }
+
+                override suspend fun deleteAllBy(parentId: String) {
+                    childStore.remove(ktype to parentId)
+                }
+            }
+        }
+
+        val obj = C(
+            root = R("id", 1),
+            childA = persistentListOf(
+                ChildA(ChildAR("ar1"), ChildB(1.0)),
+                ChildA(ChildAR("ar2"), null)
+            ),
+            childB = persistentSetOf(ChildB(0.0))
+        )
+
+        runBlocking {
+            cStore.save(obj.identity, NotExists, null) { BasicSnapshot(obj, 0, emptyList()) }
+        }
+
+        println(rStore.map)
+        println(childStore)
     }
 
     private val ComplexSnapshotStore<*, *>.rootStore: SnapshotStore<*>

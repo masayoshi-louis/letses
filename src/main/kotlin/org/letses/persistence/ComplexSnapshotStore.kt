@@ -110,7 +110,7 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         rootStore.save(entityId, version, prevSnapshot?.asRoot()) {
             snapshot.asRoot()
         }
-        snapshot::class.children.forEach {
+        snapshot.state::class.children.forEach {
             saveChild(entityId, it.returnType, it.getter.call(snapshot.state))
         }
         return snapshot
@@ -120,35 +120,37 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         TODO("Not yet implemented")
     }
 
+    private suspend fun saveComplex(parentId: String, kType: KType, current: ComplexEntityState<EntityState>?) {
+        val cls = kType.classifier as KClass<*>
+        val rs = stores[cls.root.returnType]!!
+        val r = (current as ComplexEntityState<*>).root
+        rs.save(parentId, r)
+        cls.children.forEach {
+            val child = it.getter.call(current)
+            saveChild(r.identity, it.returnType, child)
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
     private suspend fun saveChild(parentId: String, kType: KType, current: Any?) {
         val cls = kType.classifier as KClass<*>
-        if (cls.isComplex) {
-            val rs = stores[cls.root.returnType]!!
-            val r = (current as ComplexEntityState<*>).root
-            rs.save(parentId, r)
-            cls.children.forEach {
-                val child = it.getter.call(current)
-                saveChild(r.identity, it.returnType, child)
-            }
-        } else {
-            val s = if (current is Collection<*>) {
-                assert(cls.isCollection)
-                stores[kType.arguments[0].type]!!
+        if (cls.isCollection) {
+            val eKType = kType.arguments[0].type!!
+            val eCls = eKType.classifier as KClass<*>
+            if (eCls.isComplex) {
+                val coll = current as Collection<ComplexEntityState<EntityState>>
+                coll.forEach {
+                    saveComplex(parentId, eKType, it)
+                }
             } else {
-                stores[kType]!!
+                stores[eKType]!!.saveAll(parentId, current as Collection<EntityState>)
             }
-            when (current) {
-                null -> {
-                    s.deleteAllBy(parentId)
-                }
-                is Collection<*> -> {
-                    @Suppress("UNCHECKED_CAST")
-                    s.saveAll(parentId, current as Collection<EntityState>)
-                }
-                else -> {
-                    s.save(parentId, current as EntityState)
-                }
-            }
+        } else if (cls.isComplex) {
+            saveComplex(parentId, kType, current as ComplexEntityState<EntityState>)
+        } else if (current == null) {
+            stores[kType]!!.deleteAllBy(parentId)
+        } else {
+            stores[kType]!!.save(parentId, current as EntityState)
         }
     }
 
