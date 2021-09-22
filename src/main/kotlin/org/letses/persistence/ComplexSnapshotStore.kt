@@ -31,13 +31,13 @@ import kotlin.reflect.full.memberProperties
 
 class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private constructor(
     private val rootStore: SnapshotStore<S>,
-    private val stores: Map<KClass<*>, SnapshotStore.ChildEntityStore<*>>
+    private val stores: Map<KType, SnapshotStore.ChildEntityStore<EntityState>>
 ) : SnapshotStore<C> {
 
     companion object {
         class Builder<S : EntityState, C : ComplexEntityState<S>> {
             lateinit var rootStore: SnapshotStore<S>
-            val stores: MutableMap<KClass<*>, SnapshotStore.ChildEntityStore<*>> = mutableMapOf()
+            val stores: MutableMap<KType, SnapshotStore.ChildEntityStore<EntityState>> = mutableMapOf()
 
             fun build(): ComplexSnapshotStore<S, C> = ComplexSnapshotStore(rootStore, stores)
         }
@@ -46,7 +46,7 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         operator fun <R : EntityState, C : ComplexEntityState<R>> invoke(
             cls: KClass<C>,
             rootStore: SnapshotStore<R>,
-            storeProvider: (KType) -> SnapshotStore.ChildEntityStore<*>
+            storeProvider: (KType) -> SnapshotStore.ChildEntityStore<EntityState>
         ): ComplexSnapshotStore<R, C> {
             val builder = Builder<R, C>()
             builder.rootStore = rootStore
@@ -58,7 +58,7 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
 
         private fun <S : EntityState, C : ComplexEntityState<S>> Builder<S, C>.processChildren(
             kcls: KClass<*>,
-            storeProvider: (KType) -> SnapshotStore.ChildEntityStore<*>
+            storeProvider: (KType) -> SnapshotStore.ChildEntityStore<EntityState>
         ) {
             kcls.children.forEach {
                 process(it.returnType, storeProvider)
@@ -67,17 +67,20 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
 
         private fun <S : EntityState, C : ComplexEntityState<S>> Builder<S, C>.process(
             kType: KType,
-            storeProvider: (KType) -> SnapshotStore.ChildEntityStore<*>
+            storeProvider: (KType) -> SnapshotStore.ChildEntityStore<EntityState>
         ) {
             val kcls = kType.classifier as KClass<*>
             when {
-                kcls.isCollection -> process(kType.arguments[0].type!!, storeProvider)
+                kcls.isCollection -> {
+                    require(!kType.isMarkedNullable)
+                    process(kType.arguments[0].type!!, storeProvider)
+                }
                 kcls.isComplex -> {
                     process(kcls.root.returnType, storeProvider)
                     processChildren(kcls, storeProvider)
                 }
                 else -> {
-                    stores[kcls] = storeProvider(kType)
+                    stores[kType] = storeProvider(kType)
                 }
             }
         }
@@ -96,17 +99,59 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
             get() = memberProperties.single { it.name == "root" }
     }
 
+    @Suppress("RedundantNullableReturnType")
     override suspend fun save(
         entityId: String,
         version: EventVersion,
         prevSnapshot: Snapshot<C>?,
         takeSnapshot: () -> Snapshot<C>
     ): Snapshot<C>? {
-        TODO("Not yet implemented")
+        val snapshot = takeSnapshot()
+        rootStore.save(entityId, version, prevSnapshot?.asRoot()) {
+            snapshot.asRoot()
+        }
+        snapshot::class.children.forEach {
+            saveChild(entityId, it.returnType, it.getter.call(snapshot.state))
+        }
+        return snapshot
     }
 
     override suspend fun load(entityId: String): Snapshot<C>? {
         TODO("Not yet implemented")
     }
+
+    private suspend fun saveChild(parentId: String, kType: KType, current: Any?) {
+        val cls = kType.classifier as KClass<*>
+        if (cls.isComplex) {
+            val rs = stores[cls.root.returnType]!!
+            val r = (current as ComplexEntityState<*>).root
+            rs.save(parentId, r)
+            cls.children.forEach {
+                val child = it.getter.call(current)
+                saveChild(r.identity, it.returnType, child)
+            }
+        } else {
+            val s = if (current is Collection<*>) {
+                assert(cls.isCollection)
+                stores[kType.arguments[0].type]!!
+            } else {
+                stores[kType]!!
+            }
+            when (current) {
+                null -> {
+                    s.deleteAllBy(parentId)
+                }
+                is Collection<*> -> {
+                    @Suppress("UNCHECKED_CAST")
+                    s.saveAll(parentId, current as Collection<EntityState>)
+                }
+                else -> {
+                    s.save(parentId, current as EntityState)
+                }
+            }
+        }
+    }
+
+    private fun Snapshot<C>.asRoot(): Snapshot<S> = BasicSnapshot(state.root, version, deduplicationMemory)
 
 }

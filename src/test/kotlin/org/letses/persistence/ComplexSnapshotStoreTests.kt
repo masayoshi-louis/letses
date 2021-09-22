@@ -24,6 +24,8 @@ import org.letses.entity.ComplexEntityState
 import org.letses.entity.EntityState
 import org.mockito.Mockito
 import kotlin.reflect.KClass
+import kotlin.reflect.KType
+import kotlin.reflect.full.createType
 import kotlin.reflect.full.memberProperties
 import kotlin.reflect.jvm.isAccessible
 import kotlin.test.assertEquals
@@ -72,13 +74,13 @@ class ComplexSnapshotStoreTests {
         val cStore = ComplexSnapshotStore(C::class, rStore) { ktype ->
             Mockito.mock(TestStore::class.java).also {
                 Mockito.`when`(it.kcls).thenReturn(ktype.classifier as KClass<out EntityState>)
-            }
+            } as TestStore<EntityState>
         }
 
         val cStoreStores = cStore.stores
         assertEquals(2, cStoreStores.size)
-        assertEquals(ChildB::class, (cStoreStores[ChildB::class] as TestStore<*>).kcls)
-        assertEquals(ChildAR::class, (cStoreStores[ChildAR::class] as TestStore<*>).kcls)
+        assertEquals(ChildB::class, (cStoreStores[ChildB::class.createType()] as TestStore<*>).kcls)
+        assertEquals(ChildAR::class, (cStoreStores[ChildAR::class.createType()] as TestStore<*>).kcls)
     }
 
     private val ComplexSnapshotStore<*, *>.rootStore: SnapshotStore<*>
@@ -88,10 +90,10 @@ class ComplexSnapshotStoreTests {
                 call(this@rootStore)
             } as SnapshotStore<*>
 
-    private val ComplexSnapshotStore<*, *>.stores: Map<KClass<*>, SnapshotStore.ChildEntityStore<*>>
+    private val ComplexSnapshotStore<*, *>.stores: Map<KType, SnapshotStore.ChildEntityStore<*>>
         get() = this::class.memberProperties
             .single { it.name == "stores" }.getter.run {
                 isAccessible = true
                 call(this@stores)
-            } as Map<KClass<*>, SnapshotStore.ChildEntityStore<*>>
+            } as Map<KType, SnapshotStore.ChildEntityStore<*>>
 }
