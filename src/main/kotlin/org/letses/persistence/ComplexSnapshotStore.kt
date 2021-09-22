@@ -23,6 +23,7 @@ import org.letses.entity.ComplexEntityState
 import org.letses.entity.EntityState
 import org.letses.eventsourcing.EventVersion
 import kotlin.reflect.KClass
+import kotlin.reflect.KProperty1
 import kotlin.reflect.KType
 import kotlin.reflect.full.findAnnotation
 import kotlin.reflect.full.isSubclassOf
@@ -49,11 +50,9 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         ): ComplexSnapshotStore<R, C> {
             val builder = Builder<R, C>()
             builder.rootStore = rootStore
-            cls.memberProperties
-                .filter { it.findAnnotation<ComplexEntityState.Children>() != null }
-                .forEach { child ->
-                    builder.process(child.returnType, storeProvider)
-                }
+            cls.children.forEach {
+                builder.process(it.returnType, storeProvider)
+            }
             return builder.build()
         }
 
@@ -61,11 +60,9 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
             kcls: KClass<*>,
             storeProvider: (KType) -> SnapshotStore.ChildEntityStore<*>
         ) {
-            kcls.memberProperties
-                .filter { it.findAnnotation<ComplexEntityState.Children>() != null }
-                .forEach { child ->
-                    process(child.returnType, storeProvider)
-                }
+            kcls.children.forEach {
+                process(it.returnType, storeProvider)
+            }
         }
 
         private fun <S : EntityState, C : ComplexEntityState<S>> Builder<S, C>.process(
@@ -74,10 +71,9 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         ) {
             val kcls = kType.classifier as KClass<*>
             when {
-                kcls == ImmutableList::class -> process(kType.arguments[0].type!!, storeProvider)
-                kcls == ImmutableSet::class -> process(kType.arguments[0].type!!, storeProvider)
-                kcls.isSubclassOf(ComplexEntityState::class) -> {
-                    process(kcls.memberProperties.single { it.name == "root" }.returnType, storeProvider)
+                kcls.isCollection -> process(kType.arguments[0].type!!, storeProvider)
+                kcls.isComplex -> {
+                    process(kcls.root.returnType, storeProvider)
                     processChildren(kcls, storeProvider)
                 }
                 else -> {
@@ -85,6 +81,19 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
                 }
             }
         }
+
+        private val <T : Any> KClass<T>.isCollection: Boolean
+            get() = this == ImmutableList::class || this == ImmutableSet::class
+
+        private val <T : Any> KClass<T>.isComplex: Boolean
+            get() = isSubclassOf(ComplexEntityState::class)
+
+        private val <T : Any> KClass<T>.children: List<KProperty1<T, *>>
+            get() = memberProperties
+                .filter { it.findAnnotation<ComplexEntityState.Children>() != null }
+
+        private val <T : Any> KClass<T>.root: KProperty1<T, *>
+            get() = memberProperties.single { it.name == "root" }
     }
 
     override suspend fun save(
