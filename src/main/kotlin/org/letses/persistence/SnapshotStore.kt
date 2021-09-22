@@ -37,11 +37,11 @@ interface SnapshotStore<S : EntityState> {
 
     interface ChildEntityStore<E : EntityState> {
 
-        suspend fun save(parentId: String, state: E)
-
-        suspend fun saveAll(parentId: String, collection: Collection<E>)
+        suspend fun save(state: E)
 
         fun loadBy(parentId: String): Flow<E>
+
+        suspend fun delete(entity: E)
 
         suspend fun deleteAllBy(parentId: String)
 

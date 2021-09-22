@@ -20,9 +20,9 @@
 package org.letses.persistence
 
 import kotlinx.collections.immutable.ImmutableList
-import kotlinx.collections.immutable.ImmutableSet
+import kotlinx.collections.immutable.ImmutableMap
 import kotlinx.collections.immutable.persistentListOf
-import kotlinx.collections.immutable.persistentSetOf
+import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.runBlocking
@@ -51,8 +51,8 @@ class ComplexSnapshotStoreTests {
         override val identity: String = ar
     }
 
-    data class ChildB(val b: Double) : EntityState() {
-        override val identity: String = b.toString()
+    data class ChildB(val id: String, val b: Double) : EntityState() {
+        override val identity: String = id
     }
 
     data class ChildA(
@@ -66,7 +66,7 @@ class ComplexSnapshotStoreTests {
         @ComplexEntityState.Children
         val childA: ImmutableList<ChildA>,
         @ComplexEntityState.Children
-        val childB: ImmutableSet<ChildB>
+        val childB: ImmutableMap<String, ChildB>
     ) : ComplexEntityState<R>()
 
     interface TestSnapshotStore<S : EntityState> : SnapshotStore<S> {
@@ -117,12 +117,8 @@ class ComplexSnapshotStoreTests {
         val childStore = mutableMapOf<Pair<KType, String>, List<EntityState>>()
         val cStore = ComplexSnapshotStore(C::class, rStore) { ktype ->
             object : SnapshotStore.ChildEntityStore<EntityState> {
-                override suspend fun save(parentId: String, state: EntityState) {
-                    childStore[ktype to parentId] = listOf(state)
-                }
-
-                override suspend fun saveAll(parentId: String, collection: Collection<EntityState>) {
-                    childStore[ktype to parentId] = collection.toList()
+                override suspend fun save(state: EntityState) {
+                    childStore[ktype to state.identity] = listOf(state)
                 }
 
                 override fun loadBy(parentId: String): Flow<EntityState> {
@@ -133,16 +129,20 @@ class ComplexSnapshotStoreTests {
                 override suspend fun deleteAllBy(parentId: String) {
                     childStore.remove(ktype to parentId)
                 }
+
+                override suspend fun delete(entity: EntityState) {
+                    TODO("Not yet implemented")
+                }
             }
         }
 
         val obj = C(
             root = R("id", 1),
             childA = persistentListOf(
-                ChildA(ChildAR("ar1"), ChildB(1.0)),
+                ChildA(ChildAR("ar1"), ChildB("ar1.b", 1.0)),
                 ChildA(ChildAR("ar2"), null)
             ),
-            childB = persistentSetOf(ChildB(0.0))
+            childB = persistentMapOf("c.b1" to ChildB("c.b1", 0.0))
         )
 
         runBlocking {

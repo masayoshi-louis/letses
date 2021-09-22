@@ -15,10 +15,13 @@
  * limitations under the License.
  */
 
+@file:Suppress("UNCHECKED_CAST")
+
 package org.letses.persistence
 
+import arrow.core.Either
 import kotlinx.collections.immutable.ImmutableList
-import kotlinx.collections.immutable.ImmutableSet
+import kotlinx.collections.immutable.ImmutableMap
 import org.letses.entity.ComplexEntityState
 import org.letses.entity.EntityState
 import org.letses.eventsourcing.EventVersion
@@ -42,7 +45,6 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
             fun build(): ComplexSnapshotStore<S, C> = ComplexSnapshotStore(rootStore, stores)
         }
 
-        @Suppress("UNCHECKED_CAST")
         operator fun <R : EntityState, C : ComplexEntityState<R>> invoke(
             cls: KClass<C>,
             rootStore: SnapshotStore<R>,
@@ -71,9 +73,17 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         ) {
             val kcls = kType.classifier as KClass<*>
             when {
-                kcls.isCollection -> {
+                kcls.isList -> {
                     require(!kType.isMarkedNullable)
-                    process(kType.arguments[0].type!!, storeProvider)
+                    val eKType = kType.arguments[0].type!!
+                    require(!eKType.isMarkedNullable)
+                    process(eKType, storeProvider)
+                }
+                kcls.isMap -> {
+                    require(!kType.isMarkedNullable)
+                    val eKType = kType.arguments[1].type!!
+                    require(!eKType.isMarkedNullable)
+                    process(eKType, storeProvider)
                 }
                 kcls.isComplex -> {
                     process(kcls.root.returnType, storeProvider)
@@ -85,19 +95,25 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
             }
         }
 
-        private val <T : Any> KClass<T>.isCollection: Boolean
-            get() = this == ImmutableList::class || this == ImmutableSet::class
+        private val <T : Any> KClass<T>.isList: Boolean
+            get() = this == ImmutableList::class
+
+        private val <T : Any> KClass<T>.isMap: Boolean
+            get() = this == ImmutableMap::class
 
         private val <T : Any> KClass<T>.isComplex: Boolean
             get() = isSubclassOf(ComplexEntityState::class)
 
-        private val <T : Any> KClass<T>.children: List<KProperty1<T, *>>
+        private val KType.isComplex: Boolean
+            get() = (this.classifier as KClass<*>).isComplex
+
+        private val <T : Any> KClass<out T>.children: List<KProperty1<out EntityState, Any?>>
             get() = memberProperties
-                .filter { it.findAnnotation<ComplexEntityState.Children>() != null }
+                .filter { it.findAnnotation<ComplexEntityState.Children>() != null } as List<KProperty1<out EntityState, EntityState>>
 
         private val <T : Any> KClass<T>.root: KProperty1<T, *>
             get() = memberProperties.single { it.name == "root" }
-    }
+    } // end companion object
 
     @Suppress("RedundantNullableReturnType")
     override suspend fun save(
@@ -110,8 +126,11 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         rootStore.save(entityId, version, prevSnapshot?.asRoot()) {
             snapshot.asRoot()
         }
+        val ctx = Ctx(prevSnapshot?.state)
         snapshot.state::class.children.forEach {
-            saveChild(entityId, it.returnType, it.getter.call(snapshot.state))
+            ctx.pathPush(it)
+            saveChild(entityId, it.returnType, it.getter.call(snapshot.state), ctx)
+            ctx.pathPop()
         }
         return snapshot
     }
@@ -120,40 +139,179 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         TODO("Not yet implemented")
     }
 
-    private suspend fun saveComplex(parentId: String, kType: KType, current: ComplexEntityState<EntityState>?) {
+    private suspend fun saveComplex(
+        kType: KType,
+        current: ComplexEntityState<EntityState>?,
+        ctx: Ctx
+    ) {
+        if (current == null) {
+            return
+        }
         val cls = kType.classifier as KClass<*>
         val rs = stores[cls.root.returnType]!!
         val r = (current as ComplexEntityState<*>).root
-        rs.save(parentId, r)
+        rs.save(r)
         cls.children.forEach {
-            val child = it.getter.call(current)
-            saveChild(r.identity, it.returnType, child)
+            ctx.pathPush(it)
+            saveChild(r.identity, it.returnType, it.getter.call(current), ctx)
+            ctx.pathPop()
         }
     }
 
-    @Suppress("UNCHECKED_CAST")
-    private suspend fun saveChild(parentId: String, kType: KType, current: Any?) {
+    private suspend fun saveList(
+        parentId: String,
+        eKType: KType,
+        current: List<EntityState>,
+        ctx: Ctx
+    ) {
+        val prevList = (ctx.prev() as List<EntityState>?) ?: emptyList()
+        val currIdSet = current.map { e -> e.identity }.toSet()
+        prevList.forEachIndexed { i, it ->
+            if (it.identity !in currIdSet) {
+                ctx.pathPush(i)
+                delete(parentId, it, eKType, ctx)
+                ctx.pathPop()
+            }
+        }
+        if (current.isNotEmpty()) {
+            val prevMap = prevList.groupBy { it.identity }
+            current.forEachIndexed { i, it ->
+                // skip unchanged
+                if (prevMap[it.identity] != it) {
+                    ctx.pathPush(i)
+                    saveChild(parentId, eKType, it, ctx)
+                    ctx.pathPop()
+                }
+            }
+        }
+    }
+
+    private suspend fun saveMap(
+        parentId: String,
+        eKType: KType,
+        current: Map<Any, EntityState>,
+        ctx: Ctx
+    ) {
+        val prevMap = ctx.prev() as Map<Any, EntityState>? ?: emptyMap()
+        prevMap.forEach { (k, v) ->
+            if (k !in current) {
+                ctx.pathPush(k)
+                delete(parentId, v, eKType, ctx)
+                ctx.pathPop()
+            }
+        }
+        if (current.isNotEmpty()) {
+            current.forEach { (k, v) ->
+                // skip unchanged
+                if (prevMap[k] != v) {
+                    ctx.pathPush(k)
+                    saveChild(parentId, eKType, v, ctx)
+                    ctx.pathPop()
+                }
+            }
+        }
+    }
+
+    private suspend fun saveChild(
+        parentId: String,
+        kType: KType,
+        current: Any?,
+        ctx: Ctx
+    ) {
         val cls = kType.classifier as KClass<*>
-        if (cls.isCollection) {
+        if (cls.isList) {
+            require(current != null)
+            saveList(parentId, kType.arguments[0].type!!, current as List<EntityState>, ctx)
+        } else if (cls.isMap) {
+            require(current != null)
+            saveMap(parentId, kType.arguments[1].type!!, current as Map<Any, EntityState>, ctx)
+        } else if (cls.isComplex) {
+            saveComplex(kType, current as ComplexEntityState<EntityState>?, ctx)
+        } else if (current != null) {
+            stores[kType]!!.save(current as EntityState)
+        } else {
+            // current == null && prev != null
+            ctx.prev()?.let { prev ->
+                delete(parentId, prev, kType, ctx)
+            }
+        }
+    }
+
+    private suspend fun delete(parentId: String, obj: Any, kType: KType, ctx: Ctx) {
+        val cls = kType.classifier as KClass<*>
+        if (cls.isComplex) {
+            obj as ComplexEntityState<EntityState>
+            cls.children.forEach { prop ->
+                ctx.pathPush(prop)
+                prop.getter.call(obj)?.let {
+                    delete(obj.identity, it, prop.returnType, ctx)
+                }
+                ctx.pathPop()
+            }
+            stores[cls.root.returnType]!!.delete(obj.root)
+        } else if (cls.isList) {
             val eKType = kType.arguments[0].type!!
-            val eCls = eKType.classifier as KClass<*>
-            if (eCls.isComplex) {
-                val coll = current as Collection<ComplexEntityState<EntityState>>
-                coll.forEach {
-                    saveComplex(parentId, eKType, it)
+            if (eKType.isComplex) {
+                (obj as List<ComplexEntityState<EntityState>>).forEachIndexed { i, it ->
+                    ctx.pathPush(i)
+                    delete(parentId, it, eKType, ctx)
+                    ctx.pathPop()
                 }
             } else {
-                stores[eKType]!!.saveAll(parentId, current as Collection<EntityState>)
+                stores[eKType]!!.deleteAllBy(parentId)
             }
-        } else if (cls.isComplex) {
-            saveComplex(parentId, kType, current as ComplexEntityState<EntityState>)
-        } else if (current == null) {
-            stores[kType]!!.deleteAllBy(parentId)
+        } else if (cls.isMap) {
+            val eKType = kType.arguments[1].type!!
+            if (eKType.isComplex) {
+                (obj as Map<Any, ComplexEntityState<EntityState>>).forEach { (k, v) ->
+                    ctx.pathPush(k)
+                    delete(parentId, v, eKType, ctx)
+                    ctx.pathPop()
+                }
+            } else {
+                stores[eKType]!!.deleteAllBy(parentId)
+            }
         } else {
-            stores[kType]!!.save(parentId, current as EntityState)
+            stores[kType]!!.delete(obj as EntityState)
         }
     }
 
     private fun Snapshot<C>.asRoot(): Snapshot<S> = BasicSnapshot(state.root, version, deduplicationMemory)
+
+    private class Ctx(val prevRootComplex: ComplexEntityState<*>?) {
+        private val path = ArrayList<Either<KProperty1<out EntityState, Any?>, Either<Int, Any>>>()
+
+        fun prev() = path.fold(prevRootComplex as Any?) { acc, node ->
+            if (acc == null) {
+                null
+            } else {
+                when (node) {
+                    is Either.Left -> node.a.getter.call(acc)
+                    is Either.Right -> {
+                        when (val index = node.b) {
+                            is Either.Left -> (acc as List<Any?>)[index.a]
+                            is Either.Right -> (acc as Map<Any, Any?>)[index.b]
+                        }
+                    }
+                }
+            }
+        }
+
+        fun pathPush(i: Int) {
+            path.add(Either.right(Either.left(i)))
+        }
+
+        fun pathPush(k: Any) {
+            path.add(Either.right(Either.right(k)))
+        }
+
+        fun pathPush(p: KProperty1<out EntityState, *>) {
+            path.add(Either.left(p))
+        }
+
+        fun pathPop() {
+            path.removeLast()
+        }
+    }
 
 }
