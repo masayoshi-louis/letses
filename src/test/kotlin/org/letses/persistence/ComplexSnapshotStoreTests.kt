@@ -25,6 +25,7 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import org.letses.entity.ComplexEntityState
@@ -38,6 +39,7 @@ import kotlin.reflect.full.createType
 import kotlin.reflect.full.memberProperties
 import kotlin.reflect.jvm.isAccessible
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 
 @Suppress("UNCHECKED_CAST")
@@ -114,24 +116,36 @@ class ComplexSnapshotStoreTests {
             }
         }
 
-        val childStore = mutableMapOf<Pair<KType, String>, List<EntityState>>()
+        // Mock stores
+        val childStore = mutableMapOf<Pair<KType, String>, EntityState>()
+        val childStoreByParent = mutableMapOf<Pair<KType, String>, List<EntityState>>()
         val cStore = ComplexSnapshotStore(C::class, rStore) { ktype ->
             object : SnapshotStore.ChildEntityStore<EntityState> {
-                override suspend fun save(state: EntityState) {
-                    childStore[ktype to state.identity] = listOf(state)
+                override suspend fun save(state: EntityState, parentId: String?) {
+                    childStore[ktype to state.identity] = state
+                    val list = ArrayList(childStoreByParent[ktype to parentId!!] ?: emptyList())
+                    list.removeIf { it.identity == state.identity }
+                    list.add(state)
+                    childStoreByParent[ktype to parentId] = list
                 }
 
                 override fun loadBy(parentId: String): Flow<EntityState> {
-                    val list: List<EntityState> = childStore[ktype to parentId] ?: emptyList()
-                    return list.asFlow()
+                    val list: List<EntityState> = childStoreByParent[ktype to parentId] ?: emptyList()
+                    return list.asFlow().filter {
+                        (ktype to it.identity) in childStore
+                    }
                 }
 
                 override suspend fun deleteAllBy(parentId: String) {
-                    childStore.remove(ktype to parentId)
+                    childStoreByParent[ktype to parentId]?.forEach {
+                        childStore.remove(ktype to it.identity)
+                    }
+                    childStoreByParent.remove(ktype to parentId)
                 }
 
-                override suspend fun delete(entity: EntityState) {
-                    TODO("Not yet implemented")
+                override suspend fun delete(entity: EntityState, parentId: String?) {
+                    childStore.remove(entity::class.createType() to entity.identity)
+                    childStore.remove(entity::class.createType(nullable = true) to entity.identity)
                 }
             }
         }
@@ -146,11 +160,34 @@ class ComplexSnapshotStoreTests {
         )
 
         runBlocking {
-            cStore.save(obj.identity, NotExists, null) { BasicSnapshot(obj, 0, emptyList()) }
-        }
+            val snapshot1 = cStore.save(obj.identity, NotExists, null) { BasicSnapshot(obj, 0, emptyList()) }
 
-        println(rStore.map)
-        println(childStore)
+            assertTrue(childStore.isNotEmpty())
+            assertTrue(childStoreByParent.isNotEmpty())
+
+            val snapshot2 = cStore.load(obj.identity)!!
+            assertEquals(snapshot1, snapshot2)
+
+            val modified = C(
+                root = R("id", 1),
+                childA = persistentListOf(
+                    ChildA(ChildAR("ar3"), null),
+                    ChildA(ChildAR("ar2"), ChildB("ar2.b", 1.0))
+                ),
+                childB = persistentMapOf("c.b2" to ChildB("c.b2", 2.0))
+            )
+
+            val snapshot3 = cStore.save(obj.identity, snapshot2.version, snapshot2) {
+                BasicSnapshot(
+                    modified,
+                    snapshot2.version + 1,
+                    emptyList()
+                )
+            }
+
+            val snapshot4 = cStore.load(obj.identity)!!
+            assertEquals(snapshot3, snapshot4)
+        }
     }
 
     private val ComplexSnapshotStore<*, *>.rootStore: SnapshotStore<*>

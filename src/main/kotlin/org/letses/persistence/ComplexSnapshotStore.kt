@@ -19,30 +19,36 @@
 
 package org.letses.persistence
 
-import arrow.core.Either
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap
+import kotlinx.collections.immutable.persistentMapOf
+import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.flow.*
 import org.letses.entity.ComplexEntityState
 import org.letses.entity.EntityState
 import org.letses.eventsourcing.EventVersion
 import kotlin.reflect.KClass
+import kotlin.reflect.KParameter
 import kotlin.reflect.KProperty1
 import kotlin.reflect.KType
-import kotlin.reflect.full.findAnnotation
-import kotlin.reflect.full.isSubclassOf
-import kotlin.reflect.full.memberProperties
+import kotlin.reflect.full.*
+
+private typealias CPLX = ComplexEntityState<EntityState>
 
 class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private constructor(
     private val rootStore: SnapshotStore<S>,
-    private val stores: Map<KType, SnapshotStore.ChildEntityStore<EntityState>>
+    private val stores: Map<KType, SnapshotStore.ChildEntityStore<EntityState>>,
+    private val kType: KType
 ) : SnapshotStore<C> {
 
     companion object {
+
         class Builder<S : EntityState, C : ComplexEntityState<S>> {
             lateinit var rootStore: SnapshotStore<S>
+            lateinit var kType: KType
             val stores: MutableMap<KType, SnapshotStore.ChildEntityStore<EntityState>> = mutableMapOf()
 
-            fun build(): ComplexSnapshotStore<S, C> = ComplexSnapshotStore(rootStore, stores)
+            fun build(): ComplexSnapshotStore<S, C> = ComplexSnapshotStore(rootStore, stores, kType)
         }
 
         operator fun <R : EntityState, C : ComplexEntityState<R>> invoke(
@@ -52,6 +58,7 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         ): ComplexSnapshotStore<R, C> {
             val builder = Builder<R, C>()
             builder.rootStore = rootStore
+            builder.kType = cls.createType()
             cls.children.forEach {
                 builder.process(it.returnType, storeProvider)
             }
@@ -59,10 +66,10 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         }
 
         private fun <S : EntityState, C : ComplexEntityState<S>> Builder<S, C>.processChildren(
-            kcls: KClass<*>,
+            kType: KType,
             storeProvider: (KType) -> SnapshotStore.ChildEntityStore<EntityState>
         ) {
-            kcls.children.forEach {
+            kType.children.forEach {
                 process(it.returnType, storeProvider)
             }
         }
@@ -71,23 +78,22 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
             kType: KType,
             storeProvider: (KType) -> SnapshotStore.ChildEntityStore<EntityState>
         ) {
-            val kcls = kType.classifier as KClass<*>
             when {
-                kcls.isList -> {
+                kType.isList -> {
                     require(!kType.isMarkedNullable)
                     val eKType = kType.arguments[0].type!!
                     require(!eKType.isMarkedNullable)
                     process(eKType, storeProvider)
                 }
-                kcls.isMap -> {
+                kType.isMap -> {
                     require(!kType.isMarkedNullable)
                     val eKType = kType.arguments[1].type!!
                     require(!eKType.isMarkedNullable)
                     process(eKType, storeProvider)
                 }
-                kcls.isComplex -> {
-                    process(kcls.root.returnType, storeProvider)
-                    processChildren(kcls, storeProvider)
+                kType.isComplex -> {
+                    process(kType.rootType, storeProvider)
+                    processChildren(kType, storeProvider)
                 }
                 else -> {
                     stores[kType] = storeProvider(kType)
@@ -104,15 +110,30 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         private val <T : Any> KClass<T>.isComplex: Boolean
             get() = isSubclassOf(ComplexEntityState::class)
 
+        private val KType.isList: Boolean
+            get() = (this.classifier as KClass<*>).isList
+
+        private val KType.isMap: Boolean
+            get() = (this.classifier as KClass<*>).isMap
+
         private val KType.isComplex: Boolean
             get() = (this.classifier as KClass<*>).isComplex
 
-        private val <T : Any> KClass<out T>.children: List<KProperty1<out EntityState, Any?>>
+        private val <T : ComplexEntityState<*>> KClass<out T>.children: List<KProperty1<out EntityState, Any?>>
             get() = memberProperties
                 .filter { it.findAnnotation<ComplexEntityState.Children>() != null } as List<KProperty1<out EntityState, EntityState>>
 
-        private val <T : Any> KClass<T>.root: KProperty1<T, *>
+        private val KType.children: List<KProperty1<out EntityState, Any?>>
+            get() = (this.classifier as KClass<CPLX>).children
+
+        private val KType.root: KProperty1<CPLX, *>
+            get() = (this.classifier as KClass<CPLX>).root
+
+        private val <T : ComplexEntityState<*>> KClass<T>.root: KProperty1<T, *>
             get() = memberProperties.single { it.name == "root" }
+
+        private val KType.rootType: KType
+            get() = root.returnType
     } // end companion object
 
     @Suppress("RedundantNullableReturnType")
@@ -136,21 +157,67 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
     }
 
     override suspend fun load(entityId: String): Snapshot<C>? {
-        TODO("Not yet implemented")
+        val rootSnapshot = rootStore.load(entityId) ?: return null
+        val state = loadComplex(entityId, kType, rootSnapshot.state)
+        return rootSnapshot.map { state as C }
+    }
+
+    @Suppress("NAME_SHADOWING")
+    private suspend fun loadComplex(parentId: String, kType: KType, root: EntityState? = null): CPLX? {
+        assert(kType.isComplex)
+        val root = root ?: stores[kType.rootType]!!.loadBy(parentId).singleOrNull() ?: return null
+        val cls = kType.classifier as KClass<CPLX>
+        val constructor = cls.primaryConstructor!!
+        val args = cls.children.map { prop ->
+            val param = constructor.findParameterByName(prop.name)!!
+            assert(param.kind == KParameter.Kind.VALUE)
+            assert(param.type == prop.returnType)
+            param to loadChild(root.identity, prop.returnType)
+        }
+        val rootParam = constructor.parameters[0]
+        assert(rootParam.type == kType.rootType && rootParam.name == kType.root.name)
+        return constructor.callBy(args.toMap() + (constructor.parameters[0] to root))
+    }
+
+    private suspend fun loadChild(parentId: String, kType: KType): Any? {
+        return if (kType.isList) {
+            loadList(parentId, kType.arguments[0].type!!).toList().toImmutableList()
+        } else if (kType.isMap) {
+            var result = persistentMapOf<Any, Any>()
+            loadList(parentId, kType.arguments[1].type!!).collect {
+                result = result.put(it.identity, it)
+            }
+            result
+        } else if (kType.isComplex) {
+            loadComplex(parentId, kType)
+        } else {
+            stores[kType]!!.loadBy(parentId).singleOrNull()
+        }
+    }
+
+    private fun loadList(parentId: String, eKType: KType): Flow<EntityState> {
+        return if (eKType.isComplex) {
+            stores[eKType.rootType]!!.loadBy(parentId).map {
+                loadComplex(parentId, eKType, it)!!
+            }
+        } else {
+            stores[eKType]!!.loadBy(parentId)
+        }
     }
 
     private suspend fun saveComplex(
+        parentId: String,
         kType: KType,
-        current: ComplexEntityState<EntityState>?,
+        current: CPLX?,
         ctx: Ctx
     ) {
         if (current == null) {
             return
         }
-        val cls = kType.classifier as KClass<*>
-        val rs = stores[cls.root.returnType]!!
+        val cls = kType.classifier as KClass<ComplexEntityState<*>>
+        val rs = stores[kType.rootType]!!
         val r = (current as ComplexEntityState<*>).root
-        rs.save(r)
+        rs.save(r, parentId)
         cls.children.forEach {
             ctx.pathPush(it)
             saveChild(r.identity, it.returnType, it.getter.call(current), ctx)
@@ -174,7 +241,7 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
             }
         }
         if (current.isNotEmpty()) {
-            val prevMap = prevList.groupBy { it.identity }
+            val prevMap = prevList.associateBy { it.identity }
             current.forEachIndexed { i, it ->
                 // skip unchanged
                 if (prevMap[it.identity] != it) {
@@ -218,17 +285,16 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         current: Any?,
         ctx: Ctx
     ) {
-        val cls = kType.classifier as KClass<*>
-        if (cls.isList) {
+        if (kType.isList) {
             require(current != null)
             saveList(parentId, kType.arguments[0].type!!, current as List<EntityState>, ctx)
-        } else if (cls.isMap) {
+        } else if (kType.isMap) {
             require(current != null)
             saveMap(parentId, kType.arguments[1].type!!, current as Map<Any, EntityState>, ctx)
-        } else if (cls.isComplex) {
-            saveComplex(kType, current as ComplexEntityState<EntityState>?, ctx)
+        } else if (kType.isComplex) {
+            saveComplex(parentId, kType, current as CPLX?, ctx)
         } else if (current != null) {
-            stores[kType]!!.save(current as EntityState)
+            stores[kType]!!.save(current as EntityState, parentId)
         } else {
             // current == null && prev != null
             ctx.prev()?.let { prev ->
@@ -238,21 +304,20 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
     }
 
     private suspend fun delete(parentId: String, obj: Any, kType: KType, ctx: Ctx) {
-        val cls = kType.classifier as KClass<*>
-        if (cls.isComplex) {
-            obj as ComplexEntityState<EntityState>
-            cls.children.forEach { prop ->
+        if (kType.isComplex) {
+            obj as CPLX
+            kType.children.forEach { prop ->
                 ctx.pathPush(prop)
                 prop.getter.call(obj)?.let {
                     delete(obj.identity, it, prop.returnType, ctx)
                 }
                 ctx.pathPop()
             }
-            stores[cls.root.returnType]!!.delete(obj.root)
-        } else if (cls.isList) {
+            stores[kType.rootType]!!.delete(obj.root, parentId)
+        } else if (kType.isList) {
             val eKType = kType.arguments[0].type!!
             if (eKType.isComplex) {
-                (obj as List<ComplexEntityState<EntityState>>).forEachIndexed { i, it ->
+                (obj as List<CPLX>).forEachIndexed { i, it ->
                     ctx.pathPush(i)
                     delete(parentId, it, eKType, ctx)
                     ctx.pathPop()
@@ -260,10 +325,10 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
             } else {
                 stores[eKType]!!.deleteAllBy(parentId)
             }
-        } else if (cls.isMap) {
+        } else if (kType.isMap) {
             val eKType = kType.arguments[1].type!!
             if (eKType.isComplex) {
-                (obj as Map<Any, ComplexEntityState<EntityState>>).forEach { (k, v) ->
+                (obj as Map<Any, CPLX>).forEach { (k, v) ->
                     ctx.pathPush(k)
                     delete(parentId, v, eKType, ctx)
                     ctx.pathPop()
@@ -272,41 +337,50 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
                 stores[eKType]!!.deleteAllBy(parentId)
             }
         } else {
-            stores[kType]!!.delete(obj as EntityState)
+            stores[kType]!!.delete(obj as EntityState, parentId)
         }
     }
 
-    private fun Snapshot<C>.asRoot(): Snapshot<S> = BasicSnapshot(state.root, version, deduplicationMemory)
+    private inline fun <R, S> Snapshot<S>.map(f: (S) -> R): Snapshot<R> where R : EntityState, S : EntityState =
+        BasicSnapshot(f(state), version, deduplicationMemory)
+
+    private fun Snapshot<C>.asRoot(): Snapshot<S> = map { it.root }
 
     private class Ctx(val prevRootComplex: ComplexEntityState<*>?) {
-        private val path = ArrayList<Either<KProperty1<out EntityState, Any?>, Either<Int, Any>>>()
+        private sealed interface PathNode {
+            fun get(parent: Any?): Any? = parent?.let { get0(it) }
 
-        fun prev() = path.fold(prevRootComplex as Any?) { acc, node ->
-            if (acc == null) {
-                null
-            } else {
-                when (node) {
-                    is Either.Left -> node.a.getter.call(acc)
-                    is Either.Right -> {
-                        when (val index = node.b) {
-                            is Either.Left -> (acc as List<Any?>)[index.a]
-                            is Either.Right -> (acc as Map<Any, Any?>)[index.b]
-                        }
-                    }
-                }
+            fun get0(parent: Any): Any?
+
+            data class PropNode(val p: KProperty1<out EntityState, Any?>) : PathNode {
+                override fun get0(parent: Any): Any? = p.call(parent)
+            }
+
+            data class IndexNode(val i: Int) : PathNode {
+                override fun get0(parent: Any): Any? = (parent as List<Any?>)[i]
+            }
+
+            data class KeyNode(val k: Any) : PathNode {
+                override fun get0(parent: Any): Any? = (parent as Map<Any, Any?>)[k]
             }
         }
 
+        private val path = ArrayList<PathNode>()
+
+        fun prev() = path.fold(prevRootComplex as Any?) { acc, node ->
+            node.get(acc)
+        }
+
         fun pathPush(i: Int) {
-            path.add(Either.right(Either.left(i)))
+            path.add(PathNode.IndexNode(i))
         }
 
         fun pathPush(k: Any) {
-            path.add(Either.right(Either.right(k)))
+            path.add(PathNode.KeyNode(k))
         }
 
         fun pathPush(p: KProperty1<out EntityState, *>) {
-            path.add(Either.left(p))
+            path.add(PathNode.PropNode(p))
         }
 
         fun pathPop() {
