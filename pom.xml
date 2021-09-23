@@ -321,6 +321,10 @@
     </build>
 
     <repositories>
+        <repository>
+            <id>myMavenRepo.kJd9Vjdl5poChfZjnWxA</id>
+            <url>https://mymavenrepo.com/repo/y9FaQPKtqHemJTHwIjhW/</url>
+        </repository>
     </repositories>
 
     <distributionManagement>
