@@ -22,6 +22,7 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.r2dbc.spi.Connection
 import io.r2dbc.spi.ConnectionFactory
+import io.r2dbc.spi.R2dbcRollbackException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.reactive.asFlow
@@ -35,6 +36,7 @@ import org.letses.eventsourcing.NotExists
 import org.letses.messaging.BasicEventHeading
 import org.letses.messaging.Event
 import org.letses.utils.jackson.registerImmutableCollectionsSerde
+import org.slf4j.LoggerFactory
 import org.springframework.r2dbc.connection.ConnectionFactoryUtils
 import reactor.kotlin.core.publisher.toFlux
 import reactor.kotlin.extra.math.sum
@@ -53,6 +55,8 @@ class R2DBCEventStore<E : Event>(
             registerKotlinModule()
             registerImmutableCollectionsSerde()
         }
+
+        private val log = LoggerFactory.getLogger(R2DBCEventStore::class.java)
     }
 
     override suspend fun read(stream: String, from: EventVersion, consumer: (PersistentEventEnvelope<E>) -> Unit): Int {
@@ -157,20 +161,31 @@ class R2DBCEventStore<E : Event>(
 
     override suspend fun markEventsAsPublished(stream: String, versionFrom: EventVersion, versionTo: EventVersion) {
         val entityId = entityIdFromStreamId(stream)
-        useConnection { conn ->
-            val rowsUpdated =
-                conn.createStatement("UPDATE \"$tableName\"\nSET published = TRUE\nWHERE source_id = $1\nAND version >= $2\nAND version <= $3")
-                    .bind(0, entityId)
-                    .bind(1, versionFrom)
-                    .bind(2, versionTo)
-                    .execute()
-                    .awaitSingle()
-                    .rowsUpdated
-                    .awaitSingle()
-                    .toLong()
-            val expected = versionTo - versionFrom + 1
-            if (rowsUpdated != expected) {
-                throw IOException("expect $expected rows to be updated, but actually $rowsUpdated")
+        while (true) {
+            try {
+                useConnection { conn ->
+                    val rowsUpdated =
+                        conn.createStatement("UPDATE \"$tableName\"\nSET published = TRUE\nWHERE source_id = $1\nAND version >= $2\nAND version <= $3")
+                            .bind(0, entityId)
+                            .bind(1, versionFrom)
+                            .bind(2, versionTo)
+                            .execute()
+                            .awaitSingle()
+                            .rowsUpdated
+                            .awaitSingle()
+                            .toLong()
+                    val expected = versionTo - versionFrom + 1
+                    if (rowsUpdated != expected) {
+                        throw IOException("expect $expected rows to be updated, but actually $rowsUpdated")
+                    }
+                }
+                break
+            } catch (e: R2dbcRollbackException) {
+                if (e.errorCode == 40001) {
+                    log.info("auto retry, exceptionMsg: ${e.message}")
+                } else {
+                    throw e
+                }
             }
         }
     }
