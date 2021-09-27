@@ -65,9 +65,10 @@ suspend fun <A> Platform.deleteById(aggregate: A, id: String)
 }
 
 @Suppress("UNCHECKED_CAST")
-inline fun <reified T : Any> T.copy(values: Map<String, Any?>): T {
-    require(T::class.isData)
-    val copyFn = T::class.functions.single { it.name == "copy" }
+fun <T : Any> T.copy(values: Map<String, Any?>): T {
+    val cls = this::class
+    require(cls.isData)
+    val copyFn = cls.functions.single { it.name == "copy" }
     val args = copyFn.parameters.mapNotNull {
         when {
             it.kind == KParameter.Kind.INSTANCE -> it to this
