@@ -63,7 +63,7 @@ class R2DBCEventStore<E : Event>(
         val entityId = entityIdFromStreamId(stream)
         var count = 0
         useConnection { conn ->
-            conn.createStatement("SELECT * FROM \"$tableName\"\nWHERE source_id = $1\nAND version >= $2\nORDER BY version ASC")
+            conn.createStatement("SELECT * FROM $tableName\nWHERE source_id = $1\nAND version >= $2\nORDER BY version ASC")
                 .bind(0, entityId)
                 .bind(1, from)
                 .execute()
@@ -109,7 +109,7 @@ class R2DBCEventStore<E : Event>(
             // check version
             if (expectedVersion != AnyVersion) {
                 val count =
-                    conn.createStatement("SELECT COUNT(*) FROM \"$tableName\"\nWHERE source_id = $1\nAND version >= $2")
+                    conn.createStatement("SELECT COUNT(*) FROM $tableName\nWHERE source_id = $1\nAND version >= $2")
                         .bind(0, entityIdStr)
                         .bind(1, expectedVersion)
                         .execute()
@@ -123,7 +123,7 @@ class R2DBCEventStore<E : Event>(
             }
 
             val insertStmt =
-                conn.createStatement("INSERT INTO \"$tableName\"\n(source_id, version, event_id, timestamp, causality_id, correlation_id, partition_key, saga_context, extra_heading, payload_type, payload, published)\nVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)")
+                conn.createStatement("INSERT INTO $tableName\n(source_id, version, event_id, timestamp, causality_id, correlation_id, partition_key, saga_context, extra_heading, payload_type, payload, published)\nVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)")
 
             for (event in events) {
                 require(entityIdStr == event.heading.sourceId)
@@ -165,7 +165,7 @@ class R2DBCEventStore<E : Event>(
             try {
                 useConnection { conn ->
                     val rowsUpdated =
-                        conn.createStatement("UPDATE \"$tableName\"\nSET published = TRUE\nWHERE source_id = $1\nAND version >= $2\nAND version <= $3")
+                        conn.createStatement("UPDATE $tableName\nSET published = TRUE\nWHERE source_id = $1\nAND version >= $2\nAND version <= $3")
                             .bind(0, entityId)
                             .bind(1, versionFrom)
                             .bind(2, versionTo)
