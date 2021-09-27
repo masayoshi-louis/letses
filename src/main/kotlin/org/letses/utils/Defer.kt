@@ -17,14 +17,12 @@
 
 package org.letses.utils
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
 
-class Defer {
+class Defer(cs: CoroutineScope) : CoroutineScope by cs {
     companion object {
-        suspend fun scope(block: suspend Defer.() -> Unit) {
-            val defer = Defer()
+        suspend fun <R> scope(block: suspend Defer.() -> R) = coroutineScope {
+            val defer = Defer(this)
             try {
                 defer.block()
             } finally {
@@ -62,5 +60,18 @@ class Defer {
         } finally {
             doDeferred(i - 1)
         }
+    }
+}
+
+fun CoroutineScope.launchWithDefer(block: suspend Defer.() -> Unit): Job = launch {
+    Defer.scope {
+        block()
+    }
+}
+
+
+fun <T> CoroutineScope.asyncWithDefer(block: suspend Defer.() -> T): Deferred<T> = async {
+    Defer.scope {
+        block()
     }
 }

@@ -22,8 +22,11 @@ import io.streamnative.pulsar.tracing.TracingConsumerInterceptor
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.future.await
+import kotlinx.coroutines.isActive
 import org.apache.pulsar.client.api.PulsarClient
 import org.apache.pulsar.client.api.Schema
 import org.apache.pulsar.client.api.SubscriptionInitialPosition
@@ -44,8 +47,8 @@ import org.letses.persistence.publisher.PulsarProtobufEventPublisher
 import org.letses.saga.SagaDef
 import org.letses.saga.SagaEvent
 import org.letses.saga.Trigger
-import org.letses.utils.Defer
 import org.letses.utils.awaitNoCancel
+import org.letses.utils.launchWithDefer
 import org.letses.utils.tracing.injectTracing
 import org.letses.utils.tracing.span
 import org.slf4j.LoggerFactory
@@ -162,7 +165,7 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
                         val cmdHandler = commandHandlers[aggregate.type]
                             ?: throw AssertionError("can not find command handler for aggregate ${aggregate.type}")
                         consumerLaunchers = consumerLaunchers.add(Runnable {
-                            launch {
+                            launchWithDefer {
                                 val consumer = pulsarClient.newConsumer(theSchema)
                                     .topic(topic)
                                     .subscriptionName(subName)
@@ -176,30 +179,28 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
                                     .await()
                                 log.info("Pulsar consumer started, topic=$topic, subscriptionName=$subName")
 
-                                Defer.scope {
-                                    defer {
-                                        consumer.closeAsync().await()
-                                        log.info("Pulsar consumer stopped, topic=$topic, subscriptionName=$subName")
-                                    }
+                                defer {
+                                    consumer.closeAsync().await()
+                                    log.info("Pulsar consumer stopped, topic=$topic, subscriptionName=$subName")
+                                }
 
-                                    while (isActive) {
-                                        val msg = consumer.receiveAsync().await()
-                                        try {
-                                            injectTracing(msg, tracingEnabled) {
-                                                val cmd = PulsarProtobufCommandProtocol.decode(
-                                                    msg.key,
-                                                    PayloadAndHeaders(msg.properties, msg.value)
-                                                )
-                                                span?.log("MessageBus.decoded")
-                                                cmdHandler.handle(cmd)
-                                                span?.log("MessageBus.processFinished")
-                                                consumer.acknowledgeAsync(msg).awaitNoCancel()
-                                                span?.log("MessageBus.messageAcknowledged")
-                                            }
-                                        } catch (e: Exception) {
-                                            log.error("error processing command: $msg", e)
-                                            consumer.negativeAcknowledge(msg)
+                                while (isActive) {
+                                    val msg = consumer.receiveAsync().await()
+                                    try {
+                                        injectTracing(msg, tracingEnabled) {
+                                            val cmd = PulsarProtobufCommandProtocol.decode(
+                                                msg.key,
+                                                PayloadAndHeaders(msg.properties, msg.value)
+                                            )
+                                            span?.log("MessageBus.decoded")
+                                            cmdHandler.handle(cmd)
+                                            span?.log("MessageBus.processFinished")
+                                            consumer.acknowledgeAsync(msg).awaitNoCancel()
+                                            span?.log("MessageBus.messageAcknowledged")
                                         }
+                                    } catch (e: Exception) {
+                                        log.error("error processing command: $msg", e)
+                                        consumer.negativeAcknowledge(msg)
                                     }
                                 }
                             }
@@ -226,7 +227,7 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
                 val cmdHandler = commandHandlers[aggregate.type]
                     ?: throw AssertionError("can not find command handler for aggregate ${aggregate.type}")
                 consumerLaunchers = consumerLaunchers.add(Runnable {
-                    launch {
+                    launchWithDefer {
                         val consumer = pulsarClient.newConsumer(theSchema)
                             .topic(finalTopic)
                             .subscriptionName(subName)
@@ -241,34 +242,32 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
                             .await()
                         log.info("Pulsar consumer started, topic=$finalTopic, subscriptionName=$subName")
 
-                        Defer.scope {
-                            defer {
-                                consumer.closeAsync().await()
-                                log.info("Pulsar consumer stopped, topic=$finalTopic, subscriptionName=$subName")
-                            }
+                        defer {
+                            consumer.closeAsync().await()
+                            log.info("Pulsar consumer stopped, topic=$finalTopic, subscriptionName=$subName")
+                        }
 
-                            while (isActive) {
-                                val msg = consumer.receiveAsync().await()
-                                try {
-                                    injectTracing(msg, tracingEnabled) {
-                                        val event = PulsarProtobufEventProtocol.decode(
-                                            msg.key,
-                                            PayloadAndHeaders(msg.properties, msg.value)
-                                        )
-                                        span?.log("MessageBus.decoded")
-                                        aggregate.processForeignEvent(
-                                            event,
-                                            RetryControl.create { consumer.negativeAcknowledge(msg) },
-                                            cmdHandler::handle
-                                        )
-                                        span?.log("MessageBus.processFinished")
-                                        consumer.acknowledgeAsync(msg).awaitNoCancel()
-                                        span?.log("MessageBus.messageAcknowledged")
-                                    }
-                                } catch (e: Exception) {
-                                    log.error("error processing event: $msg", e)
-                                    consumer.negativeAcknowledge(msg)
+                        while (isActive) {
+                            val msg = consumer.receiveAsync().await()
+                            try {
+                                injectTracing(msg, tracingEnabled) {
+                                    val event = PulsarProtobufEventProtocol.decode(
+                                        msg.key,
+                                        PayloadAndHeaders(msg.properties, msg.value)
+                                    )
+                                    span?.log("MessageBus.decoded")
+                                    aggregate.processForeignEvent(
+                                        event,
+                                        RetryControl.create { consumer.negativeAcknowledge(msg) },
+                                        cmdHandler::handle
+                                    )
+                                    span?.log("MessageBus.processFinished")
+                                    consumer.acknowledgeAsync(msg).awaitNoCancel()
+                                    span?.log("MessageBus.messageAcknowledged")
                                 }
+                            } catch (e: Exception) {
+                                log.error("error processing event: $msg", e)
+                                consumer.negativeAcknowledge(msg)
                             }
                         }
                     }

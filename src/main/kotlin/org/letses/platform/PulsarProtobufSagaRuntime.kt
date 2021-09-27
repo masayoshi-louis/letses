@@ -37,8 +37,8 @@ import org.letses.saga.SagaDef
 import org.letses.saga.SagaEvent
 import org.letses.saga.SagaMessageHandlerImpl
 import org.letses.saga.Trigger
-import org.letses.utils.Defer
 import org.letses.utils.jackson.registerImmutableCollectionsSerde
+import org.letses.utils.launchWithDefer
 import org.slf4j.LoggerFactory
 import kotlin.coroutines.CoroutineContext
 
@@ -85,7 +85,7 @@ internal class PulsarProtobufSagaRuntime<S : EntityStateMachine<S, T>, T : Trigg
             val schema = getSchema(fullTopic)
             val subName = "$boundedContextName/${sagaDef.type.name}"
             val finalTopic = channelMapper(fullTopic)
-            launch {
+            launchWithDefer {
                 val consumer = pulsarClient.newConsumer(schema)
                     .topic(finalTopic)
                     .subscriptionName("$boundedContextName/${sagaDef.type.name}")
@@ -93,18 +93,17 @@ internal class PulsarProtobufSagaRuntime<S : EntityStateMachine<S, T>, T : Trigg
                     .subscribeAsync()
                     .await()
                 log.info("Pulsar consumer started, topic=$finalTopic, subscriptionName=$subName")
-                Defer.scope {
-                    defer {
-                        consumer.closeAsync().await()
-                        log.info("Pulsar consumer stopped, topic=$finalTopic, subscriptionName=$subName")
-                    }
 
-                    while (isActive) {
-                        val pMsg = consumer.receiveAsync().await()
-                        val msg = convertMsg(PayloadAndHeaders(pMsg.properties, pMsg.value)) ?: continue
-                        handler.handle(msg)
-                        consumer.acknowledgeAsync(pMsg).await()
-                    }
+                defer {
+                    consumer.closeAsync().await()
+                    log.info("Pulsar consumer stopped, topic=$finalTopic, subscriptionName=$subName")
+                }
+
+                while (isActive) {
+                    val pMsg = consumer.receiveAsync().await()
+                    val msg = convertMsg(PayloadAndHeaders(pMsg.properties, pMsg.value)) ?: continue
+                    handler.handle(msg)
+                    consumer.acknowledgeAsync(pMsg).await()
                 }
             }
         }
