@@ -1,14 +1,17 @@
 package org.letses.utils.optics
 
 import arrow.core.Option
+import arrow.core.foldLeft
+import arrow.core.foldMap
+import arrow.optics.Every
 import arrow.optics.Lens
 import arrow.optics.Optional
+import arrow.optics.PEvery
 import arrow.optics.typeclasses.At
 import arrow.optics.typeclasses.Index
-import kotlinx.collections.immutable.ImmutableList
-import kotlinx.collections.immutable.ImmutableMap
-import kotlinx.collections.immutable.toPersistentList
-import kotlinx.collections.immutable.toPersistentMap
+import arrow.typeclasses.Monoid
+import kotlinx.collections.immutable.*
+import kotlinx.collections.immutable.adapters.ImmutableMapAdapter
 
 fun <S, A> Lens<S, ImmutableList<A>>.at(
     i: Int,
@@ -82,3 +85,25 @@ fun <K, V> At.Companion.immutableMap(): At<ImmutableMap<K, V>, K, Option<V>> = A
         }
     )
 }
+
+fun <A> PEvery.Companion.immutableList(): Every<ImmutableList<A>, A> =
+    object : Every<ImmutableList<A>, A> {
+        override fun modify(source: ImmutableList<A>, map: (focus: A) -> A): ImmutableList<A> =
+            source.map(map).toImmutableList()
+
+        override fun <R> foldMap(M: Monoid<R>, source: ImmutableList<A>, map: (focus: A) -> R): R =
+            source.foldMap(M, map)
+    }
+
+fun <K, V> PEvery.Companion.immutableMap(): Every<ImmutableMap<K, V>, V> =
+    object : Every<ImmutableMap<K, V>, V> {
+        override fun modify(source: ImmutableMap<K, V>, map: (focus: V) -> V): ImmutableMap<K, V> =
+            ImmutableMapAdapter(source.mapValues { (_, v) -> map(v) })
+
+        override fun <R> foldMap(M: Monoid<R>, source: ImmutableMap<K, V>, map: (focus: V) -> R): R =
+            M.run {
+                source.foldLeft(empty()) { acc, (_, v) ->
+                    acc.combine(map(v))
+                }
+            }
+    }
