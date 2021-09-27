@@ -22,6 +22,7 @@ import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.coroutineScope
+import org.letses.entity.ComplexEntityState
 import org.letses.entity.EntityState
 import org.letses.entity.StandardEntityState
 import org.letses.eventsourcing.EventSourced
@@ -30,6 +31,7 @@ import org.letses.eventsourcing.NotExists
 import org.letses.eventsourcing.ProduceExtraEventHeaders
 import org.letses.messaging.*
 import org.letses.platform.MsgHandlerContext
+import org.letses.utils.copy
 import org.letses.utils.newUUID
 import org.letses.utils.tracing.span
 import org.slf4j.LoggerFactory
@@ -230,14 +232,19 @@ abstract class AbstractTransaction<S : EntityState, E : Event, in C : MsgHandler
 
         operator fun getValue(thisRef: Any?, property: KProperty<*>) = value
 
+        @Suppress("UNCHECKED_CAST")
         private fun applyEvent(state: S, ev: EventEnvelope<E>): S {
             assert(ev.heading.sourceId == entityId)
             val s = model.applyEvent(state, ev)
             if (s !is StandardEntityState<*> || !s::class.isData) {
                 return s
             }
-            @Suppress("UNCHECKED_CAST")
-            return copyWithStandardFieldsUpdated(s, ev) as S
+            return if (s is ComplexEntityState<*>) {
+                val root = copyWithStandardFieldsUpdated(s.root, ev)
+                s.copy(Collections.singletonMap(ComplexEntityState<*>::root.name, root))
+            } else {
+                copyWithStandardFieldsUpdated(s, ev) as S
+            }
         }
     }
 

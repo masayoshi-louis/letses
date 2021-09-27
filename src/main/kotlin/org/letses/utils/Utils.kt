@@ -29,6 +29,8 @@ import org.letses.domain.DeleteCommand
 import org.letses.platform.Platform
 import java.util.*
 import java.util.concurrent.CompletableFuture
+import kotlin.reflect.KParameter
+import kotlin.reflect.full.functions
 
 fun newUUID(): String = UUID.randomUUID().toString()
 
@@ -60,4 +62,18 @@ suspend fun <A> Platform.deleteById(aggregate: A, id: String)
     } catch (e: NotInitializedException) {
         // silent
     }
+}
+
+@Suppress("UNCHECKED_CAST")
+inline fun <reified T : Any> T.copy(values: Map<String, Any?>): T {
+    require(T::class.isData)
+    val copyFn = T::class.functions.single { it.name == "copy" }
+    val args = copyFn.parameters.mapNotNull {
+        when {
+            it.kind == KParameter.Kind.INSTANCE -> it to this
+            it.name in values -> it to values[it.name]
+            else -> null
+        }
+    }
+    return copyFn.callBy(args.toMap()) as T
 }
