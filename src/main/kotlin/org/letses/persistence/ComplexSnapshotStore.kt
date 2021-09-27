@@ -54,7 +54,7 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         operator fun <R : EntityState, C : ComplexEntityState<R>> invoke(
             cls: KClass<C>,
             rootStore: SnapshotStore<R>,
-            storeProvider: (KType) -> SnapshotStore.ChildEntityStore<EntityState>
+            storeProvider: (KType) -> SnapshotStore.ChildEntityStore<out EntityState>
         ): ComplexSnapshotStore<R, C> {
             val builder = Builder<R, C>()
             builder.rootStore = rootStore
@@ -67,7 +67,7 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
 
         private fun <S : EntityState, C : ComplexEntityState<S>> Builder<S, C>.processChildren(
             kType: KType,
-            storeProvider: (KType) -> SnapshotStore.ChildEntityStore<EntityState>
+            storeProvider: (KType) -> SnapshotStore.ChildEntityStore<out EntityState>
         ) {
             kType.children.forEach {
                 process(it.returnType, storeProvider)
@@ -76,7 +76,7 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
 
         private fun <S : EntityState, C : ComplexEntityState<S>> Builder<S, C>.process(
             kType: KType,
-            storeProvider: (KType) -> SnapshotStore.ChildEntityStore<EntityState>
+            storeProvider: (KType) -> SnapshotStore.ChildEntityStore<out EntityState>
         ) {
             when {
                 kType.isList -> {
@@ -96,7 +96,7 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
                     processChildren(kType, storeProvider)
                 }
                 else -> {
-                    stores[kType] = storeProvider(kType)
+                    stores[kType] = storeProvider(kType) as SnapshotStore.ChildEntityStore<EntityState>
                 }
             }
         }
