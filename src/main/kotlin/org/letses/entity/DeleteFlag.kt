@@ -17,6 +17,6 @@
 
 package org.letses.entity
 
-interface SoftDelete {
+interface DeleteFlag {
     val deleted: Boolean
 }

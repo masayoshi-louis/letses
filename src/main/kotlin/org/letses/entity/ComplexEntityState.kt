@@ -22,6 +22,10 @@ abstract class ComplexEntityState<S : EntityState> : EntityState() {
     @Target(AnnotationTarget.PROPERTY)
     annotation class Children()
 
+    interface ChildEntity {
+        val localIdentity: String
+    }
+
     abstract val root: S
 
     final override val identity: String

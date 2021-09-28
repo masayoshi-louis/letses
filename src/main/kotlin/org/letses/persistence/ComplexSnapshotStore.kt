@@ -185,7 +185,12 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         } else if (kType.isMap) {
             var result = persistentMapOf<Any, Any>()
             loadList(parentId, kType.arguments[1].type!!).collect {
-                result = result.put(it.identity, it)
+                val k = if (it is ComplexEntityState.ChildEntity) {
+                    it.localIdentity
+                } else {
+                    it.identity
+                }
+                result = result.put(k, it)
             }
             result
         } else if (kType.isComplex) {
