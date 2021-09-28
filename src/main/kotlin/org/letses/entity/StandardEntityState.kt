@@ -22,7 +22,7 @@ import java.time.Instant
 
 interface StandardEntityState<ID> {
     val id: ID
-    val version: EventVersion
+    val version: EventVersion?
     val created: Instant
     val modified: Instant
 }

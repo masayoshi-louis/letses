@@ -25,8 +25,11 @@ import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.*
 import org.letses.entity.ComplexEntityState
+import org.letses.entity.DeleteFlag
 import org.letses.entity.EntityState
 import org.letses.eventsourcing.EventVersion
+import org.letses.utils.copy
+import java.util.*
 import kotlin.reflect.KClass
 import kotlin.reflect.KParameter
 import kotlin.reflect.KProperty1
@@ -118,6 +121,11 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
 
         private val KType.isComplex: Boolean
             get() = (this.classifier as KClass<*>).isComplex
+
+        private val SOFT_DELETE_TYPE = DeleteFlag.SoftDelete::class.createType()
+
+        private val KType.isSoftDelete: Boolean
+            get() = this.isSubtypeOf(SOFT_DELETE_TYPE)
 
         private val <T : ComplexEntityState<*>> KClass<out T>.children: List<KProperty1<out EntityState, Any?>>
             get() = memberProperties
@@ -318,11 +326,13 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
                 }
                 ctx.pathPop()
             }
-            stores[kType.rootType]!!.delete(obj.root, parentId)
+            ctx.pathPush(kType.root)
+            delete(parentId, obj.root, kType.rootType, ctx)
+            ctx.pathPop()
         } else if (kType.isList) {
             val eKType = kType.arguments[0].type!!
-            if (eKType.isComplex) {
-                (obj as List<CPLX>).forEachIndexed { i, it ->
+            if (eKType.isComplex || eKType.isSoftDelete) {
+                (obj as List<Any>).forEachIndexed { i, it ->
                     ctx.pathPush(i)
                     delete(parentId, it, eKType, ctx)
                     ctx.pathPop()
@@ -332,8 +342,8 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
             }
         } else if (kType.isMap) {
             val eKType = kType.arguments[1].type!!
-            if (eKType.isComplex) {
-                (obj as Map<Any, CPLX>).forEach { (k, v) ->
+            if (eKType.isComplex || eKType.isSoftDelete) {
+                (obj as Map<Any, Any>).forEach { (k, v) ->
                     ctx.pathPush(k)
                     delete(parentId, v, eKType, ctx)
                     ctx.pathPop()
@@ -342,7 +352,13 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
                 stores[eKType]!!.deleteAllBy(parentId)
             }
         } else {
-            stores[kType]!!.delete(obj as EntityState, parentId)
+            if (obj is DeleteFlag.SoftDelete) {
+                require((kType.classifier as KClass<*>).isData) { "only support data class" }
+                val deletedObj = obj.copy(Collections.singletonMap(DeleteFlag::deleted.name, true))
+                stores[kType]!!.save(deletedObj as EntityState, parentId)
+            } else {
+                stores[kType]!!.delete(obj as EntityState, parentId)
+            }
         }
     }
 
