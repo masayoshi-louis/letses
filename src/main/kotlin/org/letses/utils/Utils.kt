@@ -18,12 +18,13 @@
 package org.letses.utils
 
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.withContext
 import org.apache.pulsar.client.api.Consumer
 import org.letses.command.BasicCommandEnvelope
-import org.letses.command.BasicCommandHeading
 import org.letses.command.NotInitializedException
+import org.letses.command.commandHeading
 import org.letses.domain.AggregateType
 import org.letses.domain.DeleteCommand
 import org.letses.platform.Platform
@@ -33,6 +34,8 @@ import kotlin.reflect.KParameter
 import kotlin.reflect.full.functions
 
 fun newUUID(): String = UUID.randomUUID().toString()
+
+fun String.parseToUUID(): UUID = UUID.fromString(this)
 
 @Deprecated("use Defer instead", replaceWith = ReplaceWith("\"org.letses.utils.Defer"))
 suspend inline fun <T> Consumer<T>.use(block: Consumer<T>.() -> Unit) {
@@ -51,11 +54,11 @@ suspend inline fun <T> CompletableFuture<T>.awaitNoCancel(): T =
     }
 
 suspend fun <A> Platform.deleteById(aggregate: A, id: String)
-        where A : AggregateType<*, *>, A : DeleteCommand {
+        where A : AggregateType<*, *>, A : DeleteCommand = coroutineScope {
     try {
         commandHandlerFor(aggregate).handle(
             BasicCommandEnvelope(
-                BasicCommandHeading(targetId = id),
+                commandHeading(targetId = id),
                 aggregate.deleteCommand()
             )
         )
