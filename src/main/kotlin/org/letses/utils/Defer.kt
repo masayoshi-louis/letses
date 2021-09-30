@@ -19,20 +19,17 @@ package org.letses.utils
 
 import kotlinx.coroutines.*
 
-class Defer(cs: CoroutineScope) : CoroutineScope by cs {
-    companion object {
-        suspend fun <R> scope(block: suspend Defer.() -> R) = coroutineScope {
-            val defer = Defer(this)
-            try {
-                defer.block()
-            } finally {
-                withContext(NonCancellable) {
-                    defer.doDeferred()
-                }
-            }
-        }
+typealias Defer = DeferScope
 
-        suspend fun withAutoClose(vararg closeable: AutoCloseable, block: suspend Defer.() -> Unit) = scope {
+suspend fun <R> deferScope(block: suspend DeferScope.() -> R): R = coroutineScope {
+    DeferScope(this).run(block)
+}
+
+suspend fun <R> CoroutineScope.deferScope(block: suspend DeferScope.() -> R): R = DeferScope(this).run(block)
+
+class DeferScope(cs: CoroutineScope) : CoroutineScope by cs {
+    companion object {
+        suspend fun withAutoClose(vararg closeable: AutoCloseable, block: suspend DeferScope.() -> Unit) = deferScope {
             closeable.forEach {
                 defer {
                     withContext(Dispatchers.IO) {
@@ -61,17 +58,27 @@ class Defer(cs: CoroutineScope) : CoroutineScope by cs {
             doDeferred(i - 1)
         }
     }
+
+    internal suspend fun <R> run(block: suspend DeferScope.() -> R): R {
+        try {
+            return block()
+        } finally {
+            withContext(NonCancellable) {
+                doDeferred()
+            }
+        }
+    }
 }
 
-fun CoroutineScope.launchWithDefer(block: suspend Defer.() -> Unit): Job = launch {
-    Defer.scope {
+fun CoroutineScope.launchWithDefer(block: suspend DeferScope.() -> Unit): Job = launch {
+    deferScope {
         block()
     }
 }
 
 
-fun <T> CoroutineScope.asyncWithDefer(block: suspend Defer.() -> T): Deferred<T> = async {
-    Defer.scope {
+fun <T> CoroutineScope.asyncWithDefer(block: suspend DeferScope.() -> T): Deferred<T> = async {
+    deferScope {
         block()
     }
 }
