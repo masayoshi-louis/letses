@@ -20,7 +20,9 @@ package org.letses.utils.tracing
 import io.github.shinigami.coroutineTracingApi.ActiveSpan
 import io.github.shinigami.coroutineTracingApi.injectTracing
 import io.github.shinigami.coroutineTracingApi.span
+import io.github.shinigami.coroutineTracingApi.withTrace
 import io.opentracing.Span
+import io.opentracing.Tracer
 import io.opentracing.util.GlobalTracer
 import io.streamnative.pulsar.tracing.TracingPulsarUtils
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +33,7 @@ import org.letses.utils.Defer
 import org.letses.utils.deferScope
 import org.letses.utils.newUUID
 import reactor.core.publisher.Mono
+import kotlin.coroutines.coroutineContext
 
 val CoroutineScope.span: Span?
     get() = coroutineContext[ActiveSpan]?.span
@@ -75,6 +78,23 @@ fun <R> tracedMono(block: suspend Defer.() -> R): Mono<R> {
             deferScope {
                 block()
             }
+        }
+    }
+}
+
+suspend inline fun <R> withTraceOpt(
+    operationName: String,
+    noinline builder: Tracer.SpanBuilder.() -> Tracer.SpanBuilder = { this },
+    noinline cleanup: Span.(error: Throwable?) -> Unit = { this.finish() },
+    crossinline block: suspend CoroutineScope.() -> R
+): R {
+    return if (coroutineContext[ActiveSpan] != null) {
+        withTrace(operationName, builder, cleanup) {
+            block()
+        }
+    } else {
+        coroutineScope {
+            block()
         }
     }
 }
