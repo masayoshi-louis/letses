@@ -254,14 +254,17 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
             }
         }
         if (current.isNotEmpty()) {
-            val prevMap = prevList.associateBy { it.identity }
-            current.forEachIndexed { i, it ->
-                // skip unchanged
-                if (prevMap[it.identity] != it) {
+            current.forEach {
+                val i = prevList.indexOfFirst { p -> p.identity == it.identity }
+                if (i < 0) {
+                    ctx.pathPushNull()
+                } else {
                     ctx.pathPush(i)
-                    saveChild(parentId, eKType, it, ctx)
-                    ctx.pathPop()
                 }
+                if (i < 0 || prevList[i] != it) {
+                    saveChild(parentId, eKType, it, ctx)
+                }
+                ctx.pathPop()
             }
         }
     }
@@ -384,6 +387,10 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
             data class KeyNode(val k: Any) : PathNode {
                 override fun get0(parent: Any): Any? = (parent as Map<Any, Any?>)[k]
             }
+
+            object NullNode : PathNode {
+                override fun get0(parent: Any): Any? = null
+            }
         }
 
         private val path = ArrayList<PathNode>()
@@ -398,6 +405,10 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
 
         fun pathPush(k: Any) {
             path.add(PathNode.KeyNode(k))
+        }
+
+        fun pathPushNull() {
+            path.add(PathNode.NullNode)
         }
 
         fun pathPush(p: KProperty1<out EntityState, *>) {
