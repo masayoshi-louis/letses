@@ -40,7 +40,6 @@
         <esjc.version>2.3.0</esjc.version>
         <junit.version>4.12</junit.version>
         <protobuf3.version>3.17.3</protobuf3.version>
-        <grpc.version>1.33.0</grpc.version>
     </properties>
 
     <dependencies>
@@ -144,12 +143,6 @@
             <groupId>org.apache.pulsar</groupId>
             <artifactId>pulsar-client</artifactId>
             <version>${pulsar.version}</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.grpc</groupId>
-            <artifactId>grpc-protobuf-lite</artifactId>
-            <version>${grpc.version}</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
