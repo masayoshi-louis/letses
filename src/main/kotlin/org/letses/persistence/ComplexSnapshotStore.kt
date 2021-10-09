@@ -156,11 +156,8 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
             snapshot.asRoot()
         }
         val ctx = Ctx(prevSnapshot?.state)
-        snapshot.state::class.children.forEach {
-            ctx.pathPush(it)
-            saveChild(entityId, it.returnType, it.getter.call(snapshot.state), ctx)
-            ctx.pathPop()
-        }
+        val state = snapshot.state as CPLX
+        saveComplex(null, state::class.createType(), state, ctx)
         return snapshot
     }
 
@@ -219,7 +216,7 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
     }
 
     private suspend fun saveComplex(
-        parentId: String,
+        parentId: String?,
         kType: KType,
         current: CPLX?,
         ctx: Ctx
@@ -227,13 +224,24 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         if (current == null) {
             return
         }
-        val cls = kType.classifier as KClass<ComplexEntityState<*>>
-        val rs = stores[kType.rootType]!!
+
         val r = (current as ComplexEntityState<*>).root
-        rs.save(r, parentId)
-        cls.children.forEach {
+
+        // parentId = null if the object is aggregate root
+        if (parentId != null) {
+            // not aggregate root, so persist the child root
+            val rs = stores[kType.rootType]!!
+            rs.save(r, parentId)
+        }
+
+        kType.children.forEach {
             ctx.pathPush(it)
-            saveChild(r.identity, it.returnType, it.getter.call(current), ctx)
+            val obj = it.getter.call(current)
+            if (obj != null && r is DeleteFlag && r.deleted) {
+                delete(r.identity, it.returnType, obj, ctx)
+            } else {
+                saveChild(r.identity, it.returnType, obj, ctx)
+            }
             ctx.pathPop()
         }
     }
@@ -249,7 +257,7 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         prevList.forEachIndexed { i, it ->
             if (it.identity !in currIdSet) {
                 ctx.pathPush(i)
-                delete(parentId, it, eKType, ctx)
+                delete(parentId, eKType, it, ctx)
                 ctx.pathPop()
             }
         }
@@ -279,7 +287,7 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         prevMap.forEach { (k, v) ->
             if (k !in current) {
                 ctx.pathPush(k)
-                delete(parentId, v, eKType, ctx)
+                delete(parentId, eKType, v, ctx)
                 ctx.pathPop()
             }
         }
@@ -314,30 +322,30 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
         } else {
             // current == null && prev != null
             ctx.prev()?.let { prev ->
-                delete(parentId, prev, kType, ctx)
+                delete(parentId, kType, prev, ctx)
             }
         }
     }
 
-    private suspend fun delete(parentId: String, obj: Any, kType: KType, ctx: Ctx) {
+    private suspend fun delete(parentId: String, kType: KType, obj: Any, ctx: Ctx) {
         if (kType.isComplex) {
             obj as CPLX
             kType.children.forEach { prop ->
                 ctx.pathPush(prop)
                 prop.getter.call(obj)?.let {
-                    delete(obj.identity, it, prop.returnType, ctx)
+                    delete(obj.identity, prop.returnType, it, ctx)
                 }
                 ctx.pathPop()
             }
             ctx.pathPush(kType.root)
-            delete(parentId, obj.root, kType.rootType, ctx)
+            delete(parentId, kType.rootType, obj.root, ctx)
             ctx.pathPop()
         } else if (kType.isList) {
             val eKType = kType.arguments[0].type!!
             if (eKType.isComplex || eKType.isSoftDelete) {
                 (obj as List<Any>).forEachIndexed { i, it ->
                     ctx.pathPush(i)
-                    delete(parentId, it, eKType, ctx)
+                    delete(parentId, eKType, it, ctx)
                     ctx.pathPop()
                 }
             } else {
@@ -348,7 +356,7 @@ class ComplexSnapshotStore<S : EntityState, C : ComplexEntityState<S>> private c
             if (eKType.isComplex || eKType.isSoftDelete) {
                 (obj as Map<Any, Any>).forEach { (k, v) ->
                     ctx.pathPush(k)
-                    delete(parentId, v, eKType, ctx)
+                    delete(parentId, eKType, v, ctx)
                     ctx.pathPop()
                 }
             } else {

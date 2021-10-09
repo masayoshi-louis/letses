@@ -52,9 +52,10 @@ interface ConsistentSnapshotTxManager {
                         try {
                             return this@withAutoRetry.atomic(block)
                         } catch (e: R2dbcRollbackException) {
-                            if (e.errorCode == errCode) {
+                            if (e.errorCode == errCode || e.sqlState == errCode.toString()) {
                                 log.info("auto retry, exceptionMsg: ${e.message}")
                             } else {
+                                log.error("transaction failed", e)
                                 throw e
                             }
                         }

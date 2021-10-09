@@ -107,6 +107,7 @@ class R2DBCEventStore<E : Event>(
         // part of transaction, so don't close connection
         useConnection { conn ->
             // check version
+            // TODO check continuity
             if (expectedVersion != AnyVersion) {
                 val count =
                     conn.createStatement("SELECT COUNT(*) FROM $tableName\nWHERE source_id = $1\nAND version >= $2")
