@@ -17,9 +17,11 @@
 
 package org.letses.messaging
 
+import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonTypeInfo
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY)
 abstract class Event {
+    @get:JsonIgnore
     open val type: String = this::class.java.simpleName
 }
