@@ -64,14 +64,14 @@ abstract class AbstractRepository<S : EntityState, E : Event, in C : MsgHandlerC
         override suspend fun saveEvents(events: List<PersistentEventEnvelope<E>>, expectedVersion: EventVersion): Unit =
             coroutineScope {
                 eventStore.append(streamName(entityId), events, expectedVersion)
-                span?.log("Repository.Transaction.eventsSaved")
+                coroutineContext.span?.log("Repository.Transaction.eventsSaved")
             }
 
         override suspend fun saveSnapshot(takeSnapshot: () -> Snapshot<S>): Unit = coroutineScope {
             snapshotStore?.let { ss ->
                 ss.save(entityId, version, prevSnapshot, takeSnapshot)?.let { s ->
                     prevSnapshot = s
-                    span?.log("Repository.Transaction.snapshotSaved")
+                    coroutineContext.span?.log("Repository.Transaction.snapshotSaved")
                     log.debug("<$correlationId>[${model.eventCategory}_$entityId] snapshot saved, ver=${s.version}")
                 }
             }
@@ -83,13 +83,13 @@ abstract class AbstractRepository<S : EntityState, E : Event, in C : MsgHandlerC
                 val events = events()
                 try {
                     publish(events)
-                    span?.log("Repository.Transaction.eventsPublished")
+                    coroutineContext.span?.log("Repository.Transaction.eventsPublished")
                     (eventStore as? PassiveEventStore)?.markEventsAsPublished(
                         streamName(entityId),
                         events.minOf { it.heading.version },
                         events.maxOf { it.heading.version }
                     )
-                    span?.log("Repository.Transaction.eventsMarkedAsPublished")
+                    coroutineContext.span?.log("Repository.Transaction.eventsMarkedAsPublished")
                 } catch (e: Exception) {
                     log.error("Publish events failed", e)
                 }
@@ -97,16 +97,16 @@ abstract class AbstractRepository<S : EntityState, E : Event, in C : MsgHandlerC
         }
 
         suspend fun begin() = coroutineScope {
-            span?.log("Repository.Transaction.begin")
+            coroutineContext.span?.log("Repository.Transaction.begin")
             snapshotStore?.load(entityId)?.let { s ->
                 loadSnapshot(s)
-                span?.log("Repository.Transaction.snapshotLoaded")
+                coroutineContext.span?.log("Repository.Transaction.snapshotLoaded")
                 prevSnapshot = s
                 log.debug("<$correlationId>[${model.eventCategory}_$entityId] snapshot loaded, ver=${s.version}")
             }
             val eventCount = eventStore.read(streamName(entityId), version + 1, ::applyEvent)
             log.debug("<$correlationId>[${model.eventCategory}_$entityId] $eventCount event(s) replayed")
-            span?.run {
+            coroutineContext.span?.run {
                 log(mapOf("event" to "Repository.Transaction.eventsReplayed", "numEvents" to eventCount))
             }
         }

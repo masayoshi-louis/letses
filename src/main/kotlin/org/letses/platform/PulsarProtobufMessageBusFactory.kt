@@ -192,11 +192,11 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
                                                 msg.key,
                                                 PayloadAndHeaders(msg.properties, msg.value)
                                             )
-                                            span?.log("MessageBus.decoded")
+                                            coroutineContext.span?.log("MessageBus.decoded")
                                             cmdHandler.handle(cmd)
-                                            span?.log("MessageBus.processFinished")
+                                            coroutineContext.span?.log("MessageBus.processFinished")
                                             consumer.acknowledgeAsync(msg).awaitNoCancel()
-                                            span?.log("MessageBus.messageAcknowledged")
+                                            coroutineContext.span?.log("MessageBus.messageAcknowledged")
                                         }
                                     } catch (e: Exception) {
                                         log.error("error processing command: $msg", e)
@@ -255,15 +255,15 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
                                         msg.key,
                                         PayloadAndHeaders(msg.properties, msg.value)
                                     )
-                                    span?.log("MessageBus.decoded")
+                                    coroutineContext.span?.log("MessageBus.decoded")
                                     aggregate.processForeignEvent(
                                         event,
                                         RetryControl.create { consumer.negativeAcknowledge(msg) },
                                         cmdHandler::handle
                                     )
-                                    span?.log("MessageBus.processFinished")
+                                    coroutineContext.span?.log("MessageBus.processFinished")
                                     consumer.acknowledgeAsync(msg).awaitNoCancel()
-                                    span?.log("MessageBus.messageAcknowledged")
+                                    coroutineContext.span?.log("MessageBus.messageAcknowledged")
                                 }
                             } catch (e: Exception) {
                                 log.error("error processing event: $msg", e)

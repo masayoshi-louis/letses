@@ -33,10 +33,11 @@ import org.letses.utils.Defer
 import org.letses.utils.deferScope
 import org.letses.utils.newUUID
 import reactor.core.publisher.Mono
+import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.coroutineContext
 
-val CoroutineScope.span: Span?
-    get() = coroutineContext[ActiveSpan]?.span
+val CoroutineContext.span: Span?
+    get() = this[ActiveSpan]?.span
 
 suspend inline fun <T> injectTracing(
     msg: Message<T>,
@@ -64,9 +65,9 @@ suspend inline fun <T> injectTracing(
     }
 }
 
-val CoroutineScope.traced: Boolean get() = coroutineContext[ActiveSpan] != null
+val CoroutineContext.traced: Boolean get() = this[ActiveSpan] != null
 
-fun CoroutineScope.traceIdOrRandom(): String = span?.context()?.toTraceId() ?: newUUID()
+fun CoroutineContext.traceIdOrRandom(): String = this.span?.context()?.toTraceId() ?: newUUID()
 
 fun <R> tracedMono(block: suspend Defer.() -> R): Mono<R> {
     val tracer = GlobalTracer.get()

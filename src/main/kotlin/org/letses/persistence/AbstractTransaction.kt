@@ -117,7 +117,7 @@ abstract class AbstractTransaction<S : EntityState, E : Event, in C : MsgHandler
     override val isEntityExists get() = version != NotExists
 
     override suspend fun commit(): List<PersistentEventEnvelope<E>> = coroutineScope {
-        span?.run {
+        coroutineContext.span?.run {
             log(mapOf("event" to "Repository.Transaction.committing", "numEvents" to pendingEvents.size))
         }
         val ret = pendingEvents
@@ -133,7 +133,7 @@ abstract class AbstractTransaction<S : EntityState, E : Event, in C : MsgHandler
         } else {
             log.debug("<$correlationId>[${model.eventCategory}_$entityId] committed, no new event")
         }
-        span?.log("Repository.Transaction.committed")
+        coroutineContext.span?.log("Repository.Transaction.committed")
         ret
     }
 

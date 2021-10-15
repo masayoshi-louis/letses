@@ -55,7 +55,10 @@ fun CommandHeading.toBasic(): BasicCommandHeading = this as? BasicCommandHeading
     expectedVersion = expectedVersion
 )
 
-fun CoroutineScope.commandHeading(targetId: String, correlationId: String = traceIdOrRandom()): BasicCommandHeading =
+fun CoroutineScope.commandHeading(
+    targetId: String,
+    correlationId: String = coroutineContext.traceIdOrRandom()
+): BasicCommandHeading =
     BasicCommandHeading(
         targetId,
         correlationId = correlationId

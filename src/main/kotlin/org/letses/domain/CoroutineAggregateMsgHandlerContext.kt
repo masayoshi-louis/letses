@@ -23,5 +23,5 @@ import org.letses.utils.tracing.span
 
 class CoroutineAggregateMsgHandlerContext(private val scope: CoroutineScope) : AggregateMsgHandlerContext {
     override val span: Span?
-        get() = scope.span
+        get() = scope.coroutineContext.span
 }

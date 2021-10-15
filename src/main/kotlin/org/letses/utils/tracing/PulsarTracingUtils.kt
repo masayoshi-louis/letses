@@ -23,7 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import org.apache.pulsar.client.api.TypedMessageBuilder
 
 fun <T> CoroutineScope.injectTracingTo(message: TypedMessageBuilder<T>) {
-    span?.context()?.let { ctx ->
+    coroutineContext.span?.context()?.let { ctx ->
         GlobalTracer.get()
             .inject(
                 ctx,

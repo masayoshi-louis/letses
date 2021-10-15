@@ -46,7 +46,7 @@ class TracedCommandHandlerImpl<S : EntityState, E : Event>(
     }
 
     override suspend fun handle(envelope: CommandEnvelope): EventEnvelope<E>? = coroutineScope {
-        if (traced) {
+        if (coroutineContext.traced) {
             withTrace(opName(envelope)) {
                 tagSpan(envelope)
                 inner.handle(envelope)
@@ -58,7 +58,7 @@ class TracedCommandHandlerImpl<S : EntityState, E : Event>(
 
     override suspend fun handleCommandReturningState(envelope: CommandEnvelope): Pair<EventEnvelope<E>?, S> =
         coroutineScope {
-            if (traced) {
+            if (coroutineContext.traced) {
                 withTrace(opName(envelope)) {
                     tagSpan(envelope)
                     inner.handleCommandReturningState(envelope)
@@ -69,15 +69,15 @@ class TracedCommandHandlerImpl<S : EntityState, E : Event>(
         }
 
     private fun CoroutineScope.tagSpan(envelope: CommandEnvelope) {
-        span?.setTag(TAG_COMPONENT, "$boundedContextName/${model.type.name}")
-        span?.setTag(TAG_AGGREGATE_TYPE, model::class.qualifiedName)
-        span?.setTag(TAG_AGGREGATE_ID, envelope.heading.targetId)
-        span?.setTag(TAG_MSG_ID, envelope.heading.commandId)
-        span?.setTag(TAG_MSG_ENVELOPE_TYPE, envelope::class.qualifiedName)
-        span?.setTag(TAG_MSG_PAYLOAD_TYPE, envelope.payload::class.qualifiedName)
-        span?.setTag(TAG_CMD_EXPECT_VER, envelope.heading.expectedVersion)
+        coroutineContext.span?.setTag(TAG_COMPONENT, "$boundedContextName/${model.type.name}")
+        coroutineContext.span?.setTag(TAG_AGGREGATE_TYPE, model::class.qualifiedName)
+        coroutineContext.span?.setTag(TAG_AGGREGATE_ID, envelope.heading.targetId)
+        coroutineContext.span?.setTag(TAG_MSG_ID, envelope.heading.commandId)
+        coroutineContext.span?.setTag(TAG_MSG_ENVELOPE_TYPE, envelope::class.qualifiedName)
+        coroutineContext.span?.setTag(TAG_MSG_PAYLOAD_TYPE, envelope.payload::class.qualifiedName)
+        coroutineContext.span?.setTag(TAG_CMD_EXPECT_VER, envelope.heading.expectedVersion)
         envelope.heading.sagaContext?.let {
-            span?.setTag(TAG_MSG_SAGA_CTX, it)
+            coroutineContext.span?.setTag(TAG_MSG_SAGA_CTX, it)
         }
     }
 
