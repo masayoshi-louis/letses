@@ -29,33 +29,40 @@ import org.letses.persistence.Repository
 import org.slf4j.LoggerFactory
 import java.io.Closeable
 
-class Platform internal constructor(
+interface Platform {
+    fun <E : Event> commandHandlerFor(type: AggregateType<*, E>): CommandHandler<E>
+    fun <S : EntityState, E : Event> commandHandlerWithEntityStateFor(type: AggregateType<S, E>): CommandHandlerWithEntityState<S, E>
+    fun stop(): Unit
+    fun start(): Unit
+}
+
+class PlatformImpl internal constructor(
     private val aggregates: Map<AggregateType<*, *>, AggregateModel<*, *>>,
     private val aEventStores: Map<AggregateType<*, *>, EventStore<*>>,
     private val aRepositories: Map<AggregateType<*, *>, Repository<*, *, AggregateMsgHandlerContext>>,
     private val aCommandHandlers: Map<AggregateType<*, *>, CommandHandler<*>>,
     private val messageBus: MessageBus,
     private val sagas: List<SagaRuntime<*, *>>,
-) : Closeable {
+) : Platform, Closeable {
 
     companion object {
         val log = LoggerFactory.getLogger(Platform::class.java)
     }
 
     @Suppress("UNCHECKED_CAST")
-    fun <E : Event> commandHandlerFor(type: AggregateType<*, E>): CommandHandler<E> =
+    override fun <E : Event> commandHandlerFor(type: AggregateType<*, E>): CommandHandler<E> =
         aCommandHandlers[type]!! as CommandHandler<E>
 
     @Suppress("UNCHECKED_CAST")
-    fun <S : EntityState, E : Event> commandHandlerWithEntityStateFor(type: AggregateType<S, E>): CommandHandlerWithEntityState<S, E> =
+    override fun <S : EntityState, E : Event> commandHandlerWithEntityStateFor(type: AggregateType<S, E>): CommandHandlerWithEntityState<S, E> =
         aCommandHandlers[type]!! as CommandHandlerWithEntityState<S, E>
 
-    fun start(): Unit = synchronized(this) {
+    override fun start(): Unit = synchronized(this) {
         messageBus.start()
         sagas.forEach { it.start() }
     }
 
-    fun stop(): Unit = synchronized(this) {
+    override fun stop(): Unit = synchronized(this) {
         sagas.forEach { it.stop() }
         aRepositories.values.forEach { it.close() }
         messageBus.stop()

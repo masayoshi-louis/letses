@@ -115,7 +115,7 @@ class PlatformBuilder {
             it.build(messageBusFactory)
         }
 
-        return Platform(
+        return PlatformImpl(
             aggregates = aggregateMap,
             aEventStores = aEventStores,
             aRepositories = aRepositories.toMap(),
