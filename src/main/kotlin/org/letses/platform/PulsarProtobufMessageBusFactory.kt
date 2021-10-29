@@ -220,60 +220,75 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
         if (!eventListenerEnabled) return
 
         aggregates.forEach { (aggregate, _) ->
-            aggregate.subscribedChannels.forEach { topic ->
-                val theSchema = topicSchema(topic)
-                val subName = "$boundedContextName/${aggregate.type.name}"
-                val finalTopic = channelMapper(topic)
-                val cmdHandler = commandHandlers[aggregate.type]
-                    ?: throw AssertionError("can not find command handler for aggregate ${aggregate.type}")
-                consumerLaunchers = consumerLaunchers.add(Runnable {
-                    launchWithDefer {
-                        val consumer = pulsarClient.newConsumer(theSchema)
-                            .topic(finalTopic)
-                            .subscriptionName(subName)
-                            .subscriptionType(SubscriptionType.Key_Shared)
-                            .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
-                            .apply {
-                                if (tracingEnabled) {
-                                    intercept(TracingConsumerInterceptor())
-                                }
-                            }
-                            .subscribeAsync()
-                            .await()
-                        log.info("Pulsar consumer started, topic=$finalTopic, subscriptionName=$subName")
-
-                        defer {
-                            consumer.closeAsync().await()
-                            log.info("Pulsar consumer stopped, topic=$finalTopic, subscriptionName=$subName")
-                        }
-
-                        while (isActive) {
-                            val msg = consumer.receiveAsync().await()
-                            try {
-                                injectTracing(msg, tracingEnabled) {
-                                    val event = PulsarProtobufEventProtocol.decode(
-                                        msg.key,
-                                        PayloadAndHeaders(msg.properties, msg.value)
-                                    )
-                                    coroutineContext.span?.log("MessageBus.decoded")
-                                    aggregate.processForeignEvent(
-                                        event,
-                                        RetryControl.create { consumer.negativeAcknowledge(msg) },
-                                        cmdHandler::handle
-                                    )
-                                    coroutineContext.span?.log("MessageBus.processFinished")
-                                    consumer.acknowledgeAsync(msg).awaitNoCancel()
-                                    coroutineContext.span?.log("MessageBus.messageAcknowledged")
-                                }
-                            } catch (e: Exception) {
-                                log.error("error processing event: $msg", e)
-                                consumer.negativeAcknowledge(msg)
-                            }
-                        }
-                    }
-                }) // end: add
+            val subName = "$boundedContextName/${aggregate.type.name}"
+            val cmdHandler = commandHandlers[aggregate.type]
+                ?: throw AssertionError("can not find command handler for aggregate ${aggregate.type}")
+            configureEventHandler<Any>(aggregate.subscribedChannels, subName) { event, retryControl ->
+                aggregate.processForeignEvent(
+                    event,
+                    retryControl,
+                    cmdHandler::handle
+                )
             }
         }
+    }
+
+    override fun <E> configureEventHandler(
+        subscribedChannels: List<String>,
+        subName: String,
+        handler: suspend (event: E, retry: RetryControl) -> Unit
+    ) {
+        subscribedChannels.forEach { topic ->
+            val theSchema = topicSchema(topic)
+            val finalTopic = channelMapper(topic)
+            consumerLaunchers = consumerLaunchers.add(Runnable {
+                launchWithDefer {
+                    val consumer = pulsarClient.newConsumer(theSchema)
+                        .topic(finalTopic)
+                        .subscriptionName(subName)
+                        .subscriptionType(SubscriptionType.Key_Shared)
+                        .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
+                        .apply {
+                            if (tracingEnabled) {
+                                intercept(TracingConsumerInterceptor())
+                            }
+                        }
+                        .subscribeAsync()
+                        .await()
+                    log.info("Pulsar consumer started, topic=$finalTopic, subscriptionName=$subName")
+
+                    defer {
+                        consumer.closeAsync().await()
+                        log.info("Pulsar consumer stopped, topic=$finalTopic, subscriptionName=$subName")
+                    }
+
+                    while (isActive) {
+                        val msg = consumer.receiveAsync().await()
+                        try {
+                            injectTracing(msg, tracingEnabled) {
+                                val event = PulsarProtobufEventProtocol.decode(
+                                    msg.key,
+                                    PayloadAndHeaders(msg.properties, msg.value)
+                                )
+                                coroutineContext.span?.log("MessageBus.decoded")
+                                @Suppress("UNCHECKED_CAST")
+                                handler(event as E, RetryControl.create { consumer.negativeAcknowledge(msg) })
+                                coroutineContext.span?.log("MessageBus.processFinished")
+                                consumer.acknowledgeAsync(msg).awaitNoCancel()
+                                coroutineContext.span?.log("MessageBus.messageAcknowledged")
+                            }
+                        } catch (e: Exception) {
+                            log.error("error processing event: $msg", e)
+                            consumer.negativeAcknowledge(msg)
+                        }
+                    }
+                }
+            }) // end: add
+        }
+    }
+
+    override fun <E : Event> configureEventHandler(eventHandler: EventHandler<E>) {
+        configureEventHandler(eventHandler.subscribeChannels(), eventHandler.subscriptionName(), eventHandler::handle)
     }
 
     override fun <E : Event, R : Any> configureEventPump(

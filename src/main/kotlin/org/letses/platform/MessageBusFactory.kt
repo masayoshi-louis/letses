@@ -24,6 +24,8 @@ import org.letses.entity.EntityState
 import org.letses.entity.EntityStateMachine
 import org.letses.eventsourcing.EventSourced
 import org.letses.messaging.Event
+import org.letses.messaging.EventHandler
+import org.letses.messaging.RetryControl
 import org.letses.persistence.EventStore
 import org.letses.persistence.SubscribableEventStore
 import org.letses.persistence.publisher.EventPublisher
@@ -54,6 +56,14 @@ interface MessageBusFactory {
         commandHandlers: Map<AggregateType<out EntityState, out Event>, CommandHandler<*>>,
         boundedContextName: String
     )
+
+    fun <E> configureEventHandler(
+        subscribedChannels: List<String>,
+        subName: String,
+        handler: suspend (event: E, retry: RetryControl) -> Unit
+    )
+
+    fun <E : Event> configureEventHandler(eventHandler: EventHandler<E>)
 
     fun <E : Event, R : Any> configureEventPump(
         model: EventSourced<*, E, *>,
