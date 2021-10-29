@@ -29,12 +29,10 @@ inline fun <reified T : GeneratedMessageV3, V> KFunction1<T, V>.getOrNull(msg: T
     @Suppress("DEPRECATION", "UNCHECKED_CAST")
     val hasMethod = try {
         T::class.java.getDeclaredMethod("has${this.name.substring(3)}")
-    } catch (
-        e: NoSuchMethodException
-    ) {
-        null
+    } catch (e: NoSuchMethodException) {
+        // not optional field
+        return this.invoke(msg)
     }
-    //val hasFn = T::class.functions.singleOrNull { it.name == "has${this.name.capitalize()}" } as KFunction<Boolean>?
     return if (hasMethod == null || hasMethod.invoke(msg) as Boolean) {
         this.invoke(msg)
     } else {
