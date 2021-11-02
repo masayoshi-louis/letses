@@ -101,6 +101,11 @@
             <artifactId>jackson-datatype-jsr310</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.hubspot.jackson</groupId>
+            <artifactId>jackson-datatype-protobuf</artifactId>
+            <version>0.9.12</version>
+        </dependency>
+        <dependency>
             <groupId>io.projectreactor.kotlin</groupId>
             <artifactId>reactor-kotlin-extensions</artifactId>
             <version>1.1.4</version>

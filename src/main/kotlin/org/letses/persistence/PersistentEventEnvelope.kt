@@ -25,7 +25,7 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.fasterxml.jackson.module.paramnames.ParameterNamesModule
 import com.google.protobuf.GeneratedMessageV3
-import com.google.protobuf.util.JsonFormat
+import com.hubspot.jackson.datatype.protobuf.ProtobufModule
 import org.letses.messaging.BasicEventHeading
 import org.letses.messaging.Event
 import org.letses.messaging.EventEnvelope
@@ -33,8 +33,6 @@ import org.letses.messaging.WrappedProtobufEvent
 import org.letses.saga.SagaEvent
 import org.letses.saga.Trigger
 import org.letses.utils.jackson.registerImmutableCollectionsSerde
-import java.lang.reflect.Method
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.reflect.full.isSubclassOf
 
 data class PersistentEventEnvelope<out E : Event>(
@@ -106,7 +104,7 @@ data class PersistentEventEnvelope<out E : Event>(
         fun defaultProtobufSerDe(baseCls: Class<*>): SerDe<String, WrappedProtobufEvent> =
             object : SerDe<String, WrappedProtobufEvent> {
                 private val baseName = baseCls.name
-                private val builderMethods = ConcurrentHashMap<String, Method>()
+                private val objectMapper = ObjectMapper().registerModules(ProtobufModule())
 
                 override fun serialize(e: PersistentEventEnvelope<WrappedProtobufEvent>): String {
                     throw UnsupportedOperationException()
@@ -120,16 +118,12 @@ data class PersistentEventEnvelope<out E : Event>(
                 }
 
                 override fun serializePayload(payload: WrappedProtobufEvent): String =
-                    JsonFormat.printer().print(payload.message)
+                    objectMapper.writeValueAsString(payload.message)
 
-                override fun deserializePayload(a: String, payloadType: String): WrappedProtobufEvent {
-                    val m = builderMethods.computeIfAbsent(payloadType) {
-                        val cls = Thread.currentThread().contextClassLoader.loadClass("${baseName}\$$payloadType")
-                        cls.getDeclaredMethod("newBuilder")
-                    }
-                    val builder = m.invoke(null) as GeneratedMessageV3.Builder<*>
-                    JsonFormat.parser().merge(a, builder)
-                    return WrappedProtobufEvent(builder.build() as GeneratedMessageV3)
+                override fun deserializePayload(json: String, payloadType: String): WrappedProtobufEvent {
+                    val cls = Thread.currentThread().contextClassLoader.loadClass("${baseName}\$$payloadType")
+                    val payload = objectMapper.readValue(json, cls)
+                    return WrappedProtobufEvent(payload as GeneratedMessageV3)
                 }
             }
     }
