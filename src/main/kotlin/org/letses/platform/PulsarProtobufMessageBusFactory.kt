@@ -186,8 +186,8 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
 
                                 while (isActive) {
                                     val msg = consumer.receiveAsync().await()
-                                    try {
-                                        injectTracing(msg, tracingEnabled) {
+                                    injectTracing(msg, tracingEnabled) {
+                                        try {
                                             val cmd = PulsarProtobufCommandProtocol.decode(
                                                 msg.key,
                                                 PayloadAndHeaders(msg.properties, msg.value)
@@ -197,10 +197,10 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
                                             coroutineContext.span?.log("MessageBus.processFinished")
                                             consumer.acknowledgeAsync(msg).awaitNoCancel()
                                             coroutineContext.span?.log("MessageBus.messageAcknowledged")
+                                        } catch (e: Exception) {
+                                            log.error("error processing command: $msg", e)
+                                            consumer.negativeAcknowledge(msg)
                                         }
-                                    } catch (e: Exception) {
-                                        log.error("error processing command: $msg", e)
-                                        consumer.negativeAcknowledge(msg)
                                     }
                                 }
                             }
@@ -264,8 +264,8 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
 
                     while (isActive) {
                         val msg = consumer.receiveAsync().await()
-                        try {
-                            injectTracing(msg, tracingEnabled) {
+                        injectTracing(msg, tracingEnabled) {
+                            try {
                                 val event = PulsarProtobufEventProtocol.decode(
                                     msg.key,
                                     PayloadAndHeaders(msg.properties, msg.value)
@@ -276,10 +276,10 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
                                 coroutineContext.span?.log("MessageBus.processFinished")
                                 consumer.acknowledgeAsync(msg).awaitNoCancel()
                                 coroutineContext.span?.log("MessageBus.messageAcknowledged")
+                            } catch (e: Exception) {
+                                log.error("error processing event: $msg", e)
+                                consumer.negativeAcknowledge(msg)
                             }
-                        } catch (e: Exception) {
-                            log.error("error processing event: $msg", e)
-                            consumer.negativeAcknowledge(msg)
                         }
                     }
                 }
