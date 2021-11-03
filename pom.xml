@@ -39,7 +39,7 @@
         <pulsar.version>2.8.0</pulsar.version>
         <esjc.version>2.3.0</esjc.version>
         <junit.version>4.12</junit.version>
-        <protobuf3.version>3.17.3</protobuf3.version>
+        <protobuf3.version>3.19.1</protobuf3.version>
     </properties>
 
     <dependencies>
