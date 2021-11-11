@@ -17,6 +17,7 @@
 
 package org.letses.utils.protobuf
 
+import com.google.protobuf.Duration
 import com.google.protobuf.GeneratedMessageV3
 import com.google.protobuf.Timestamp
 import java.time.Instant
@@ -44,6 +45,14 @@ fun Timestamp.toInstant(): Instant = Instant.ofEpochSecond(seconds, nanos.toLong
 
 fun Instant.toProtobuf(): Timestamp = Timestamp.newBuilder().run {
     seconds = this@toProtobuf.epochSecond
+    nanos = this@toProtobuf.nano
+    build()
+}
+
+fun Duration.toJava(): java.time.Duration = java.time.Duration.ofSeconds(seconds, nanos.toLong())
+
+fun java.time.Duration.toProtobuf(): Duration = Duration.newBuilder().run {
+    seconds = this@toProtobuf.seconds
     nanos = this@toProtobuf.nano
     build()
 }
