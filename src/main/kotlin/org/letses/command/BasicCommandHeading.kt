@@ -24,6 +24,7 @@ import org.letses.messaging.EventEnvelope
 import org.letses.utils.newUUID
 import org.letses.utils.tracing.traceIdOrRandom
 import java.time.Instant
+import kotlin.coroutines.coroutineContext
 
 data class BasicCommandHeading(
     override val targetId: String,
@@ -58,8 +59,12 @@ fun CommandHeading.toBasic(): BasicCommandHeading = this as? BasicCommandHeading
 fun CoroutineScope.commandHeading(
     targetId: String,
     correlationId: String = coroutineContext.traceIdOrRandom()
-): BasicCommandHeading =
-    BasicCommandHeading(
-        targetId,
-        correlationId = correlationId
-    )
+): BasicCommandHeading = BasicCommandHeading(targetId, correlationId = correlationId)
+
+suspend fun commandHeading(
+    targetId: String,
+    correlationId: String? = null
+): BasicCommandHeading = BasicCommandHeading(
+    targetId,
+    correlationId = correlationId ?: coroutineContext.traceIdOrRandom()
+)
