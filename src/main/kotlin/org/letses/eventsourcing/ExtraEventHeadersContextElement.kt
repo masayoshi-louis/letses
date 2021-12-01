@@ -15,31 +15,13 @@
  * limitations under the License.
  */
 
-package org.letses.persistence
+package org.letses.eventsourcing
 
-import org.letses.entity.EntityState
-import org.letses.eventsourcing.EventVersion
-import org.letses.messaging.Event
-import org.letses.messaging.EventEnvelope
-import org.letses.platform.MsgHandlerContext
+import kotlin.coroutines.CoroutineContext
 
-/**
- * NOT thread-safe
- */
-interface Transaction<out S : EntityState, out E : Event, in C : MsgHandlerContext> {
-
-    suspend fun handleMsg(msg: Any, ctx: C): EventEnvelope<E>?
-
-    val isEntityExists: Boolean
-
-    val state: S
-
-    val version: EventVersion
-
-    fun checkVersion(expected: EventVersion)
-
-    suspend fun commit(): List<PersistentEventEnvelope<E>>
-
-    fun lastCommittedEvents(): List<PersistentEventEnvelope<E>>
-
+data class ExtraEventHeadersContextElement(
+    override val key: Key,
+    val value: String
+) : CoroutineContext.Element {
+    data class Key(val key: String) : CoroutineContext.Key<ExtraEventHeadersContextElement>
 }

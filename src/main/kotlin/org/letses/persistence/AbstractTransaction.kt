@@ -21,14 +21,12 @@ import arrow.core.identity
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
+import kotlinx.collections.immutable.toPersistentMap
 import kotlinx.coroutines.coroutineScope
 import org.letses.entity.ComplexEntityState
 import org.letses.entity.EntityState
 import org.letses.entity.StandardEntityState
-import org.letses.eventsourcing.EventSourced
-import org.letses.eventsourcing.EventVersion
-import org.letses.eventsourcing.NotExists
-import org.letses.eventsourcing.ProduceExtraEventHeaders
+import org.letses.eventsourcing.*
 import org.letses.messaging.*
 import org.letses.platform.MsgHandlerContext
 import org.letses.utils.copy
@@ -37,6 +35,7 @@ import org.letses.utils.tracing.span
 import org.slf4j.LoggerFactory
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.coroutineContext
 import kotlin.reflect.KClass
 import kotlin.reflect.KParameter
 import kotlin.reflect.KProperty
@@ -144,7 +143,7 @@ abstract class AbstractTransaction<S : EntityState, E : Event, in C : MsgHandler
             throw ConcurrentModificationException("current version is $version while $expected is expected")
     }
 
-    override fun handleMsg(msg: Any, ctx: C): EventEnvelope<E>? {
+    override suspend fun handleMsg(msg: Any, ctx: C): EventEnvelope<E>? {
         val causalityId = msgIdExtractor(msg) // i.e. Command Id
         if (deduplicationMemory.contains(causalityId)) return null // ignore duplicated message
         val pair = when (model) {
@@ -153,6 +152,13 @@ abstract class AbstractTransaction<S : EntityState, E : Event, in C : MsgHandler
         }
         if (pair != null) {
             val (e, eh) = pair
+            val ehPlus = coroutineContext.fold(eh) { acc, elem ->
+                if (elem is ExtraEventHeadersContextElement) {
+                    acc.toPersistentMap().put(elem.key.key, elem.value)
+                } else {
+                    acc
+                }
+            }
             val h = BasicEventHeading(
                 sourceId = entityId,
                 eventId = newUUID(),
@@ -160,7 +166,7 @@ abstract class AbstractTransaction<S : EntityState, E : Event, in C : MsgHandler
                 causalityId = causalityId,
                 correlationId = correlationId,
                 partitionKey = partitionKey,
-                extra = eh
+                extra = ehPlus
             ).let(enhanceHeading).toBasic()
             val pe = PersistentEventEnvelope(h, e)
             applyEvent(pe)
