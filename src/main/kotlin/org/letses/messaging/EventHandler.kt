@@ -29,6 +29,6 @@ interface EventHandler<E : Event> {
         return this::class.simpleName!!
     }
 
-    suspend fun handle(event: EventEnvelope<E>, retryControl: RetryControl)
+    suspend fun handle(event: EventEnvelope<E>, retry: RetryControl)
 
 }
