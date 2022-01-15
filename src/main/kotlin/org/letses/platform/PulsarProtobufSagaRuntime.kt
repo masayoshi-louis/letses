@@ -117,6 +117,10 @@ internal class PulsarProtobufSagaRuntime<S : EntityStateMachine<S, T>, T : Trigg
         log.info("Saga runtime for ${sagaDef.type.name} stopped")
     }
 
+    override suspend fun salvageUnpublishedEvents() {
+        repo.salvageUnpublishedEvents()
+    }
+
     private fun convertMsg(payloadAndHeaders: PayloadAndHeaders<GeneratedMessageV3>): MessageEnvelope? = when {
         PulsarProtobufCommandProtocol.isCommand(null, payloadAndHeaders) -> {
             PulsarProtobufCommandProtocol.decode(null, payloadAndHeaders)

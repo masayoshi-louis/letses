@@ -22,7 +22,9 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import io.r2dbc.spi.Connection
 import io.r2dbc.spi.ConnectionFactory
 import io.r2dbc.spi.R2dbcRollbackException
+import io.r2dbc.spi.Row
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.reactive.awaitFirstOrNull
@@ -68,25 +70,7 @@ class R2DBCEventStore<E : Event>(
                 .execute()
                 .toFlux()
                 .flatMap { result ->
-                    result.map { row, _ ->
-                        PersistentEventEnvelope(
-                            BasicEventHeading(
-                                sourceId = row["source_id", UUID::class.java].toString(),
-                                eventId = row["event_id", UUID::class.java].toString(),
-                                version = row["version", java.lang.Long::class.java].toLong(),
-                                causalityId = row["causality_id", UUID::class.java].toString(),
-                                correlationId = row["correlation_id", String::class.java],
-                                partitionKey = row["partition_key", String::class.java],
-                                timestamp = row["timestamp", Instant::class.java],
-                                sagaContext = row["saga_context", String::class.java],
-                                extra = extraHeadingObjectMapper.readValue(row["extra_heading", String::class.java])
-                            ),
-                            serDe.deserializePayload(
-                                row["payload", String::class.java],
-                                row["payload_type", String::class.java]
-                            )
-                        )
-                    }
+                    result.map { row, _ -> mapRow(row) }
                 }.asFlow().collect {
                     consumer(it)
                     count += 1
@@ -190,6 +174,18 @@ class R2DBCEventStore<E : Event>(
         }
     }
 
+    override suspend fun loadUnpublishedEvents(): Flow<PersistentEventEnvelope<E>> {
+        return useConnection { conn ->
+            conn.createStatement("SELECT * FROM $tableName\nWHERE published = FALSE")
+                .execute()
+                .toFlux()
+                .flatMap { result ->
+                    result.map { row, _ -> mapRow(row) }
+                }
+                .asFlow()
+        }
+    }
+
     private suspend inline fun <R> useConnection(block: (Connection) -> R): R {
         val conn = ConnectionFactoryUtils.getConnection(connectionFactory).awaitSingle()
         try {
@@ -206,5 +202,23 @@ class R2DBCEventStore<E : Event>(
     }
 
     private fun entityIdFromStreamId(stream: String) = stream.substring(stream.indexOf('-') + 1)
+
+    private fun mapRow(row: Row) = PersistentEventEnvelope(
+        BasicEventHeading(
+            sourceId = row["source_id", UUID::class.java].toString(),
+            eventId = row["event_id", UUID::class.java].toString(),
+            version = row["version", java.lang.Long::class.java].toLong(),
+            causalityId = row["causality_id", UUID::class.java].toString(),
+            correlationId = row["correlation_id", String::class.java],
+            partitionKey = row["partition_key", String::class.java],
+            timestamp = row["timestamp", Instant::class.java],
+            sagaContext = row["saga_context", String::class.java],
+            extra = extraHeadingObjectMapper.readValue(row["extra_heading", String::class.java])
+        ),
+        serDe.deserializePayload(
+            row["payload", String::class.java],
+            row["payload_type", String::class.java]
+        )
+    )
 
 }

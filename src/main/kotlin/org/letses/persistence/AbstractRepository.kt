@@ -17,6 +17,7 @@
 package org.letses.persistence
 
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.collect
 import org.letses.entity.EntityState
 import org.letses.eventsourcing.EventSourced
 import org.letses.eventsourcing.EventVersion
@@ -78,21 +79,7 @@ abstract class AbstractRepository<S : EntityState, E : Event, in C : MsgHandlerC
 
         @Suppress("NAME_SHADOWING")
         override suspend fun publishEvents(events: () -> List<PersistentEventEnvelope<E>>): Unit = coroutineScope {
-            eventPublisher?.run {
-                val events = events()
-                try {
-                    publish(events)
-                    coroutineContext.span?.log("Repository.Transaction.eventsPublished")
-                    (eventStore as? PassiveEventStore)?.markEventsAsPublished(
-                        streamName(entityId),
-                        events.minOf { it.heading.version },
-                        events.maxOf { it.heading.version }
-                    )
-                    coroutineContext.span?.log("Repository.Transaction.eventsMarkedAsPublished")
-                } catch (e: Exception) {
-                    log.error("Publish events failed", e)
-                }
-            }
+            publishEvents(entityId, events)
         }
 
         suspend fun begin() = coroutineScope {
@@ -125,6 +112,43 @@ abstract class AbstractRepository<S : EntityState, E : Event, in C : MsgHandlerC
         (eventPublisher as? Closeable)?.close()
     }
 
+    override suspend fun salvageUnpublishedEvents() {
+        if (eventStore is PassiveEventStore<E> && eventPublisher != null) {
+            while (true) {
+                var count = 0
+                eventStore.loadUnpublishedEvents().collect {
+                    count += 1
+                    publishEvents(it.heading.sourceId) { listOf(it) }
+                }
+                if (count == 0) {
+                    break
+                }
+            }
+        }
+    }
+
     private fun streamName(id: String) = model.eventCategory + "-" + id
+
+    @Suppress("NAME_SHADOWING")
+    private suspend inline fun publishEvents(
+        entityId: String,
+        crossinline events: () -> List<PersistentEventEnvelope<E>>
+    ): Unit = coroutineScope {
+        eventPublisher?.run {
+            val events = events()
+            try {
+                publish(events)
+                coroutineContext.span?.log("Repository.Transaction.eventsPublished")
+                (eventStore as? PassiveEventStore)?.markEventsAsPublished(
+                    streamName(entityId),
+                    events.minOf { it.heading.version },
+                    events.maxOf { it.heading.version }
+                )
+                coroutineContext.span?.log("Repository.Transaction.eventsMarkedAsPublished")
+            } catch (e: Exception) {
+                log.error("Publish events failed", e)
+            }
+        }
+    }
 
 }

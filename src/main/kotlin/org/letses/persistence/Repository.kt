@@ -28,4 +28,6 @@ interface Repository<S : EntityState, E : Event, in C : MsgHandlerContext> : Clo
 
     suspend fun beginTransaction(settings: TransactionSettings): Transaction<S, E, C>
 
+    suspend fun salvageUnpublishedEvents()
+
 }

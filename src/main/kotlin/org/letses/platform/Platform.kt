@@ -33,6 +33,7 @@ interface Platform {
     fun <S : EntityState, E : Event> commandHandlerWithEntityStateFor(type: AggregateType<S, E>): CommandHandlerWithEntityState<S, E>
     fun stop(): Unit
     fun start(): Unit
+    suspend fun salvageUnpublishedEvents()
 }
 
 class PlatformImpl internal constructor(
@@ -69,6 +70,15 @@ class PlatformImpl internal constructor(
 
     override fun close() {
         stop()
+    }
+
+    override suspend fun salvageUnpublishedEvents() {
+        aRepositories.values.forEach {
+            it.salvageUnpublishedEvents()
+        }
+        sagas.forEach {
+            it.salvageUnpublishedEvents()
+        }
     }
 
 }

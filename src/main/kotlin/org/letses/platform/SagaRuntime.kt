@@ -25,4 +25,6 @@ interface SagaRuntime<S : EntityStateMachine<S, T>, T : Trigger> {
 
     fun stop()
 
+    suspend fun salvageUnpublishedEvents()
+
 }

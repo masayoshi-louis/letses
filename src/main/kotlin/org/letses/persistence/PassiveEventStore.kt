@@ -16,6 +16,7 @@
 
 package org.letses.persistence
 
+import kotlinx.coroutines.flow.Flow
 import org.letses.eventsourcing.EventVersion
 import org.letses.messaging.Event
 
@@ -28,5 +29,7 @@ interface PassiveEventStore<E : Event> : EventStore<E> {
      * @param versionTo inclusive
      */
     suspend fun markEventsAsPublished(stream: String, versionFrom: EventVersion, versionTo: EventVersion)
+
+    suspend fun loadUnpublishedEvents(): Flow<PersistentEventEnvelope<E>>
 
 }
