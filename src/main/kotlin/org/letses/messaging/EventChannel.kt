@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2021 LETSES.org
- *   National Electronics and Computer Technology Center, Thailand
+ * Copyright (c) 2022 LETSES.org
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
