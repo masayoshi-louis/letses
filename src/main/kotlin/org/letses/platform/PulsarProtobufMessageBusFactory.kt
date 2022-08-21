@@ -263,6 +263,7 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
 
                     while (isActive) {
                         val msg = consumer.receiveAsync().await()
+                        var negativeAcknowledged = false
                         injectTracing(msg, tracingEnabled) {
                             try {
                                 val event = PulsarProtobufEventProtocol.decode(
@@ -271,12 +272,20 @@ class PulsarProtobufMessageBusFactory : MessageBusFactory, CoroutineScope {
                                 )
                                 coroutineContext.span?.log("MessageBus.decoded")
                                 @Suppress("UNCHECKED_CAST")
-                                handler(event as E, RetryControl.create { consumer.negativeAcknowledge(msg) })
+                                handler(event as E, RetryControl.create {
+                                    coroutineContext.span?.log("MessageBus.negativeAcknowledged")
+                                    negativeAcknowledged = true
+                                    consumer.negativeAcknowledge(msg)
+                                })
                                 coroutineContext.span?.log("MessageBus.processFinished")
-                                consumer.acknowledgeAsync(msg).awaitNoCancel()
-                                coroutineContext.span?.log("MessageBus.messageAcknowledged")
+                                if (!negativeAcknowledged) {
+                                    consumer.acknowledgeAsync(msg).awaitNoCancel()
+                                    coroutineContext.span?.log("MessageBus.messageAcknowledged")
+                                }
                             } catch (e: Exception) {
+                                coroutineContext.span?.log("MessageBus.exception")
                                 log.error("error processing event: $msg", e)
+                                negativeAcknowledged = true
                                 consumer.negativeAcknowledge(msg)
                             }
                         }
