@@ -21,7 +21,7 @@ import com.github.msemys.esjc.operation.WrongExpectedVersionException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.SendChannel
-import kotlinx.coroutines.channels.sendBlocking
+import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.launch
 import org.letses.eventsourcing.AnyVersion
@@ -106,10 +106,13 @@ class GesEventStore<E : Event>(
                     assert(e.isJson)
                     val json = String(e.data, Charsets.UTF_8)
                     val v = serDe.deserialize(json, e.eventType)
-                    ch.sendBlocking(v) // block current thread for channel send
+                    // block current thread for channel send
+                    val result = ch.trySendBlocking(v)
+                    result.exceptionOrNull()?.let { throw it }
                 } catch (t: Throwable) {
                     ch.close(t)
-                    shutdownCh.sendBlocking(true)
+                    val result = shutdownCh.trySendBlocking(true)
+                    result.exceptionOrNull()?.let { throw it }
                 }
             }
 
@@ -124,7 +127,8 @@ class GesEventStore<E : Event>(
                     ch.close()
                 else
                     ch.close(SubscribableEventStore.SubscriptionDroppedException(reason.toString(), exception))
-                shutdownCh.sendBlocking(true)
+                val result = shutdownCh.trySendBlocking(true)
+                result.exceptionOrNull()?.let { throw it }
             }
         })
         launch {
