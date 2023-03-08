@@ -33,16 +33,18 @@ interface ConsistentSnapshotTxManager {
             override fun getPropagationBehavior() = TransactionDefinition.PROPAGATION_REQUIRES_NEW
         }
 
-        fun spring(tm: ReactiveTransactionManager): ConsistentSnapshotTxManager =
-            object : ConsistentSnapshotTxManager {
-                @Suppress("UNCHECKED_CAST")
-                override suspend fun <R> atomic(block: suspend () -> R): R {
-                    val tx = TransactionalOperator.create(tm, springTxDef)
-                    return mono {
-                        block()
-                    }.`as`(tx::transactional).awaitSingleOrNull() as R
-                }
+        fun spring(
+            tm: ReactiveTransactionManager,
+            txDef: TransactionDefinition = springTxDef
+        ): ConsistentSnapshotTxManager = object : ConsistentSnapshotTxManager {
+            @Suppress("UNCHECKED_CAST")
+            override suspend fun <R> atomic(block: suspend () -> R): R {
+                val tx = TransactionalOperator.create(tm, txDef)
+                return mono {
+                    block()
+                }.`as`(tx::transactional).awaitSingleOrNull() as R
             }
+        }
 
         fun ConsistentSnapshotTxManager.withAutoRetry(errCode: Int = 40001): ConsistentSnapshotTxManager =
             object : ConsistentSnapshotTxManager {
