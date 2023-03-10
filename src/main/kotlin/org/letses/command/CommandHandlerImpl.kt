@@ -48,7 +48,7 @@ internal class CommandHandlerImpl<S : EntityState, E : Event>(
 
     override suspend fun handle(envelope: CommandEnvelope): EventEnvelope<E>? {
         try {
-            return doTxn(envelope).lastCommittedEvents().lastOrNull()
+            return doTxn(envelope).lastEvents().lastOrNull()
         } catch (e: Exception) {
             throw exceptionMapper(e)
         }
@@ -57,7 +57,7 @@ internal class CommandHandlerImpl<S : EntityState, E : Event>(
     override suspend fun handleCommandReturningState(envelope: CommandEnvelope): Pair<EventEnvelope<E>?, S> {
         try {
             val tx = doTxn(envelope)
-            val evt = tx.lastCommittedEvents().lastOrNull()
+            val evt = tx.lastEvents().lastOrNull()
             return Pair(evt, tx.state)
         } catch (e: Exception) {
             throw exceptionMapper(e)
@@ -88,9 +88,11 @@ internal class CommandHandlerImpl<S : EntityState, E : Event>(
                 !tx.isEntityExists && autoInitialize != null -> {
                     tx.handleMsg(autoInitialize.initMsg(h.targetId), CoroutineAggregateMsgHandlerContext(this))
                 }
+
                 !tx.isEntityExists && !isInitMsg -> {
                     throw NotInitializedException()
                 }
+
                 tx.isEntityExists && isInitMsg -> {
                     throw AlreadyInitializedException()
                 }

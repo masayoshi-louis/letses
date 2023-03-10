@@ -41,4 +41,6 @@ interface Transaction<out S : EntityState, out E : Event, in C : MsgHandlerConte
 
     fun lastCommittedEvents(): List<PersistentEventEnvelope<E>>
 
+    fun lastEvents(): List<PersistentEventEnvelope<E>>
+
 }

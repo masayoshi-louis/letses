@@ -128,6 +128,7 @@ abstract class AbstractTransaction<S : EntityState, E : Event, in C : MsgHandler
             }.atomic {
                 saveEvents(pendingEvents, version - pendingEvents.size)
                 saveSnapshot(::taskSnapshot)
+                log.debug("<$correlationId>[${model.eventCategory}_$entityId] submitted ${ret.size} event(s)")
             }
         } else {
             log.debug("<$correlationId>[${model.eventCategory}_$entityId] committed, no new event")
@@ -137,6 +138,10 @@ abstract class AbstractTransaction<S : EntityState, E : Event, in C : MsgHandler
     }
 
     override fun lastCommittedEvents(): List<PersistentEventEnvelope<E>> = this.committedEvents ?: persistentListOf()
+
+    override fun lastEvents(): List<PersistentEventEnvelope<E>> {
+        return lastCommittedEvents() + this.pendingEvents
+    }
 
     override fun checkVersion(expected: EventVersion) {
         if (version != expected)
