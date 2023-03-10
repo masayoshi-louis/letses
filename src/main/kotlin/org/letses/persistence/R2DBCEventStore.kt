@@ -109,8 +109,12 @@ class R2DBCEventStore<E : Event>(
             val insertStmt =
                 conn.createStatement("INSERT INTO $tableName\n(source_id, version, event_id, timestamp, causality_id, correlation_id, partition_key, saga_context, extra_heading, payload_type, payload, published)\nVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)")
 
-            for (event in events) {
+            events.forEachIndexed { index, event ->
                 require(entityIdStr == event.heading.sourceId)
+                if (index > 0) {
+                    insertStmt
+                        .add()
+                }
                 insertStmt
                     .bind(0, event.heading.sourceId)
                     .bind(1, event.heading.version)
@@ -133,7 +137,6 @@ class R2DBCEventStore<E : Event>(
                 insertStmt.bind(9, event.payload.type)
                 insertStmt.bind(10, serDe.serializePayload(event.payload))
                 insertStmt.bind(11, false)
-                insertStmt.add()
             }
 
             val rowsInserted = insertStmt.execute().toFlux().flatMap { it.rowsUpdated }.sum().awaitSingle()
