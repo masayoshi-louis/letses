@@ -45,6 +45,16 @@ interface ConsistentSnapshotTxManager {
             tm: ReactiveTransactionManager,
             txDef: TransactionDefinition = DefaultSpringTxDef
         ): ConsistentSnapshotTxManager = object : ConsistentSnapshotTxManager {
+
+            private val mainTxOp = TransactionalOperator.create(tm, txDef)
+            private val afterCommitTxOp = TransactionalOperator.create(
+                tm,
+                object : TransactionDefinition by txDef {
+                    override fun getPropagationBehavior() =
+                        TransactionDefinition.PROPAGATION_REQUIRES_NEW
+                }
+            )
+
             @Suppress("UNCHECKED_CAST")
             override suspend fun <R> atomic(block: suspend () -> R): R {
                 return atomic(Mono.empty(), block)
@@ -53,17 +63,15 @@ interface ConsistentSnapshotTxManager {
             override fun afterCommit(action: suspend () -> Unit): AfterCompleteStep =
                 object : AfterCompleteStep {
                     override suspend fun <R> atomic(block: suspend () -> R): R {
-                        val tx = TransactionalOperator.create(tm, object : TransactionDefinition by txDef {
-                            override fun getPropagationBehavior() = TransactionDefinition.PROPAGATION_REQUIRES_NEW
-                        })
-
                         @Suppress("UNCHECKED_CAST")
                         val preAction = tracedMono("registerSynchronization") {
                             val tsm = TransactionSynchronizationManager.forCurrentTransaction().awaitSingle()
                             tsm.registerSynchronization(object : TransactionSynchronization, Ordered {
-                                override fun afterCommit(): Mono<Void?> = tracedMono("afterCommit") {
-                                    action()
-                                }.`as`(tx::transactional) as Mono<Void?>
+                                override fun afterCommit(): Mono<Void?> {
+                                    return tracedMono("afterCommit") {
+                                        action()
+                                    }.`as`(afterCommitTxOp::transactional) as Mono<Void?>
+                                }
 
                                 override fun getOrder(): Int = Ordered.HIGHEST_PRECEDENCE
                             })
@@ -75,12 +83,11 @@ interface ConsistentSnapshotTxManager {
 
             @Suppress("UNCHECKED_CAST")
             private suspend fun <R> atomic(preAction: Mono<Unit>, block: suspend () -> R): R {
-                val tx = TransactionalOperator.create(tm, txDef)
                 return preAction.then(
                     tracedMono("consistentSnapshotAtomicOp") {
                         block()
                     }
-                ).`as`(tx::transactional).awaitSingleOrNull() as R
+                ).`as`(mainTxOp::transactional).awaitSingleOrNull() as R
             }
         }
 
