@@ -16,11 +16,15 @@
 
 package org.letses.persistence
 
+import io.github.shinigami.coroutineTracingApi.injectTracing
+import io.github.shinigami.coroutineTracingApi.span
+import io.opentracing.util.GlobalTracer
 import io.r2dbc.spi.R2dbcRollbackException
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kotlinx.coroutines.reactor.mono
 import org.slf4j.LoggerFactory
+import org.springframework.core.Ordered
 import org.springframework.transaction.ReactiveTransactionManager
 import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.reactive.TransactionSynchronization
@@ -33,42 +37,50 @@ interface ConsistentSnapshotTxManager {
     companion object {
         private val log = LoggerFactory.getLogger(ConsistentSnapshotTxManager::class.java)
 
-        private val springTxDef = object : TransactionDefinition by TransactionDefinition.withDefaults() {
+        private val DefaultSpringTxDef = object : TransactionDefinition by TransactionDefinition.withDefaults() {
             override fun getPropagationBehavior() = TransactionDefinition.PROPAGATION_REQUIRES_NEW
         }
 
         fun spring(
             tm: ReactiveTransactionManager,
-            txDef: TransactionDefinition = springTxDef
+            txDef: TransactionDefinition = DefaultSpringTxDef
         ): ConsistentSnapshotTxManager = object : ConsistentSnapshotTxManager {
             @Suppress("UNCHECKED_CAST")
             override suspend fun <R> atomic(block: suspend () -> R): R {
-                return atomic(null, block)
+                return atomic(Mono.empty(), block)
             }
 
-            override fun afterCommit(action: suspend () -> Unit): AfterCompleteStep = object : AfterCompleteStep {
-                override suspend fun <R> atomic(block: suspend () -> R): R {
-                    val preAction = mono {
-                        val tsm = TransactionSynchronizationManager.forCurrentTransaction().awaitSingle()
-                        tsm.registerSynchronization(object : TransactionSynchronization {
-                            override fun afterCommit(): Mono<Void> = mono {
-                                action()
-                                null
-                            }
+            override fun afterCommit(action: suspend () -> Unit): AfterCompleteStep =
+                object : AfterCompleteStep {
+                    override suspend fun <R> atomic(block: suspend () -> R): R {
+                        val tx = TransactionalOperator.create(tm, object : TransactionDefinition by txDef {
+                            override fun getPropagationBehavior() = TransactionDefinition.PROPAGATION_REQUIRES_NEW
                         })
+
+                        @Suppress("UNCHECKED_CAST")
+                        val preAction = tracedMono("registerSynchronization") {
+                            val tsm = TransactionSynchronizationManager.forCurrentTransaction().awaitSingle()
+                            tsm.registerSynchronization(object : TransactionSynchronization, Ordered {
+                                override fun afterCommit(): Mono<Void?> = tracedMono("afterCommit") {
+                                    action()
+                                }.`as`(tx::transactional) as Mono<Void?>
+
+                                override fun getOrder(): Int = Ordered.HIGHEST_PRECEDENCE
+                            })
+                        }
+                        return atomic(preAction, block)
                     }
-                    return atomic(preAction, block)
+
                 }
 
-            }
-
             @Suppress("UNCHECKED_CAST")
-            private suspend fun <R> atomic(preAction: Mono<Unit>?, block: suspend () -> R): R {
+            private suspend fun <R> atomic(preAction: Mono<Unit>, block: suspend () -> R): R {
                 val tx = TransactionalOperator.create(tm, txDef)
-                return mono {
-                    preAction?.awaitSingleOrNull()
-                    block()
-                }.`as`(tx::transactional).awaitSingleOrNull() as R
+                return preAction.then(
+                    tracedMono("consistentSnapshotAtomicOp") {
+                        block()
+                    }
+                ).`as`(tx::transactional).awaitSingleOrNull() as R
             }
         }
 
@@ -96,13 +108,14 @@ interface ConsistentSnapshotTxManager {
             return block()
         }
 
-        override fun afterCommit(action: suspend () -> Unit): AfterCompleteStep = object : AfterCompleteStep {
-            override suspend fun <R> atomic(block: suspend () -> R): R {
-                return this@PSEUDO.atomic(block).also {
-                    action()
+        override fun afterCommit(action: suspend () -> Unit): AfterCompleteStep =
+            object : AfterCompleteStep {
+                override suspend fun <R> atomic(block: suspend () -> R): R {
+                    return this@PSEUDO.atomic(block).also {
+                        action()
+                    }
                 }
             }
-        }
     }
 
     suspend fun <R> atomic(block: suspend () -> R): R
@@ -113,4 +126,17 @@ interface ConsistentSnapshotTxManager {
         suspend fun <R> atomic(block: suspend () -> R): R
     }
 
+}
+
+
+private fun <R> tracedMono(opName: String, block: suspend () -> R): Mono<R> {
+    val tracer = GlobalTracer.get()
+    val span = tracer.activeSpan()
+    return mono {
+        injectTracing(tracer, {
+            span(opName) { asChildOf(span) }
+        }) {
+            block()
+        }
+    }
 }
