@@ -120,14 +120,15 @@ abstract class AbstractTransaction<S : EntityState, E : Event, in C : MsgHandler
         }
         val ret = pendingEvents
         if (pendingEvents.isNotEmpty()) {
-            consistentSnapshotTxManager.atomic {
+            consistentSnapshotTxManager.afterCommit {
+                committedEvents = pendingEvents
+                pendingEvents = persistentListOf()
+                log.debug("<$correlationId>[${model.eventCategory}_$entityId] committed, ${ret.size} event(s) saved")
+                publishEvents(::lastCommittedEvents)
+            }.atomic {
                 saveEvents(pendingEvents, version - pendingEvents.size)
                 saveSnapshot(::taskSnapshot)
             }
-            committedEvents = pendingEvents
-            pendingEvents = persistentListOf()
-            log.debug("<$correlationId>[${model.eventCategory}_$entityId] committed, ${ret.size} event(s) saved")
-            publishEvents(::lastCommittedEvents)
         } else {
             log.debug("<$correlationId>[${model.eventCategory}_$entityId] committed, no new event")
         }

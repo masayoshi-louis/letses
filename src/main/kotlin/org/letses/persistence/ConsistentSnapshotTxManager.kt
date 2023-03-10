@@ -17,12 +17,16 @@
 package org.letses.persistence
 
 import io.r2dbc.spi.R2dbcRollbackException
+import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kotlinx.coroutines.reactor.mono
 import org.slf4j.LoggerFactory
 import org.springframework.transaction.ReactiveTransactionManager
 import org.springframework.transaction.TransactionDefinition
+import org.springframework.transaction.reactive.TransactionSynchronization
+import org.springframework.transaction.reactive.TransactionSynchronizationManager
 import org.springframework.transaction.reactive.TransactionalOperator
+import reactor.core.publisher.Mono
 
 interface ConsistentSnapshotTxManager {
 
@@ -39,15 +43,37 @@ interface ConsistentSnapshotTxManager {
         ): ConsistentSnapshotTxManager = object : ConsistentSnapshotTxManager {
             @Suppress("UNCHECKED_CAST")
             override suspend fun <R> atomic(block: suspend () -> R): R {
+                return atomic(null, block)
+            }
+
+            override fun afterCommit(action: suspend () -> Unit): AfterCompleteStep = object : AfterCompleteStep {
+                override suspend fun <R> atomic(block: suspend () -> R): R {
+                    val preAction = mono {
+                        val tsm = TransactionSynchronizationManager.forCurrentTransaction().awaitSingle()
+                        tsm.registerSynchronization(object : TransactionSynchronization {
+                            override fun afterCommit(): Mono<Void> = mono {
+                                action()
+                                null
+                            }
+                        })
+                    }
+                    return atomic(preAction, block)
+                }
+
+            }
+
+            @Suppress("UNCHECKED_CAST")
+            private suspend fun <R> atomic(preAction: Mono<Unit>?, block: suspend () -> R): R {
                 val tx = TransactionalOperator.create(tm, txDef)
                 return mono {
+                    preAction?.awaitSingleOrNull()
                     block()
                 }.`as`(tx::transactional).awaitSingleOrNull() as R
             }
         }
 
         fun ConsistentSnapshotTxManager.withAutoRetry(errCode: Int = 40001): ConsistentSnapshotTxManager =
-            object : ConsistentSnapshotTxManager {
+            object : ConsistentSnapshotTxManager by this {
                 override suspend fun <R> atomic(block: suspend () -> R): R {
                     while (true) {
                         try {
@@ -69,8 +95,22 @@ interface ConsistentSnapshotTxManager {
         override suspend fun <R> atomic(block: suspend () -> R): R {
             return block()
         }
+
+        override fun afterCommit(action: suspend () -> Unit): AfterCompleteStep = object : AfterCompleteStep {
+            override suspend fun <R> atomic(block: suspend () -> R): R {
+                return this@PSEUDO.atomic(block).also {
+                    action()
+                }
+            }
+        }
     }
 
     suspend fun <R> atomic(block: suspend () -> R): R
+
+    fun afterCommit(action: suspend () -> Unit): AfterCompleteStep
+
+    interface AfterCompleteStep {
+        suspend fun <R> atomic(block: suspend () -> R): R
+    }
 
 }
