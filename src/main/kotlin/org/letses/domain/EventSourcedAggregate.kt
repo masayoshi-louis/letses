@@ -22,8 +22,8 @@ import org.letses.messaging.Event
 
 interface EventSourcedAggregate<S : EntityState, E : Event> : EventSourced<S, E, AggregateMsgHandlerContext> {
 
-    override fun handleMsg(state: S, msg: Any, ctx: AggregateMsgHandlerContext): E? = handleMsg(state, msg)
+    override suspend fun handleMsg(state: S, msg: Any, ctx: AggregateMsgHandlerContext): E? = handleMsg(state, msg)
 
-    fun handleMsg(state: S, msg: Any): E? = null
+    suspend fun handleMsg(state: S, msg: Any): E? = null
 
 }

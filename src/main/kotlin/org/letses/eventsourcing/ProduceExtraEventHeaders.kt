@@ -23,7 +23,8 @@ import org.letses.platform.MsgHandlerContext
 
 interface ProduceExtraEventHeaders<S : EntityState, E : Event, in C : MsgHandlerContext> : EventSourced<S, E, C> {
 
-    override fun handleMsg(state: S, msg: Any, ctx: C): E? = handleMsgProduceExtraEventHeaders(state, msg, ctx)?.first
+    override suspend fun handleMsg(state: S, msg: Any, ctx: C): E? =
+        handleMsgProduceExtraEventHeaders(state, msg, ctx)?.first
 
     fun handleMsgProduceExtraEventHeaders(state: S, msg: Any, ctx: C): Pair<E, ImmutableMap<String, String>>?
 

@@ -28,7 +28,7 @@ interface EventSourced<S : EntityState, E : Event, in C : MsgHandlerContext> {
 
     fun applyEvent(state: S, event: EventEnvelope<E>): S
 
-    fun handleMsg(state: S, msg: Any, ctx: C): E?
+    suspend fun handleMsg(state: S, msg: Any, ctx: C): E?
 
     val eventCategory: String get() = this::class.simpleName!!
 
