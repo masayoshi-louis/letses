@@ -35,6 +35,3 @@ annotation class MessageHandlerInternalDispatchFunction
 
 @Target(AnnotationTarget.FUNCTION)
 annotation class MessageHandlerWithReceiver
-
-@Target(AnnotationTarget.FUNCTION)
-annotation class Suspendable

@@ -67,12 +67,11 @@ class MessageDispatcherProcessor : AbstractProcessor() {
         val (pkg, name) = pkgAndName
         processingEnv.messager.printMessage(Diagnostic.Kind.NOTE, "Generating dispatcher for $pkgAndName")
         val fnList = rawList.map { it as ExecutableElement }
-        val suspendable = fnList.any { it.hasAnnotation(org.letses.codegen.Suspendable::class) }
+        val suspendable = fnList.any { it.isSuspendFn }
         val parameterList = fnList[0].parameters.filter {
             !(suspendable && it.asType().fullName == "kotlin.coroutines.Continuation")
         }
         val parameterListSize = parameterList.size
-        require(fnList.all { it.parameters.size == if (suspendable) parameterListSize + 1 else parameterListSize })
 
         val varPosition = fnList.find { it.hasAnnotation(org.letses.codegen.MessageHandlerVarParam::class) }
             ?.getAnnotation(org.letses.codegen.MessageHandlerVarParam::class.java)?.position
@@ -219,5 +218,8 @@ class MessageDispatcherProcessor : AbstractProcessor() {
 
             else -> this.asTypeName()
         }
+
+    private val ExecutableElement.isSuspendFn: Boolean
+        get() = parameters.any { it.asType().fullName == "kotlin.coroutines.Continuation" }
 
 }
