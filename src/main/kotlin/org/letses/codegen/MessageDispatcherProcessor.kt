@@ -67,8 +67,12 @@ class MessageDispatcherProcessor : AbstractProcessor() {
         val (pkg, name) = pkgAndName
         processingEnv.messager.printMessage(Diagnostic.Kind.NOTE, "Generating dispatcher for $pkgAndName")
         val fnList = rawList.map { it as ExecutableElement }
-        val parameterListSize = fnList[0].parameters.size
-        require(fnList.all { it.parameters.size == parameterListSize })
+        val suspendable = fnList.any { it.hasAnnotation(org.letses.codegen.Suspendable::class) }
+        val parameterList = fnList[0].parameters.filter {
+            !(suspendable && it.asType().fullName == "kotlin.coroutines.Continuation")
+        }
+        val parameterListSize = parameterList.size
+        require(fnList.all { it.parameters.size == if (suspendable) parameterListSize + 1 else parameterListSize })
 
         val varPosition = fnList.find { it.hasAnnotation(org.letses.codegen.MessageHandlerVarParam::class) }
             ?.getAnnotation(org.letses.codegen.MessageHandlerVarParam::class.java)?.position
@@ -93,12 +97,17 @@ class MessageDispatcherProcessor : AbstractProcessor() {
         val receiver =
             fnList.find { it.hasAnnotation(org.letses.codegen.MessageHandlerWithReceiver::class) }?.enclosingElement
 
-        val parameters = fnList[0].parameters.map { it.simpleName.toString() to it.asType().kotlinType }
+        val parameters = parameterList.mapNotNull {
+            val t = it.asType()
+            if (suspendable && t.fullName == "kotlin.coroutines.Continuation") null
+            else it.simpleName.toString() to t.kotlinType
+        }
         val varTypes = fnList.map {
             val t = it.parameters[varPosition].asType()
-            val applyArgsBlock = it.parameters.mapIndexed { i, p ->
+            val applyArgsBlock = it.parameters.mapIndexedNotNull { i, p ->
                 val n = p.simpleName.toString()
-                if (i == varPosition) "$n = %L"
+                if (n == "continuation") null
+                else if (i == varPosition) "$n = %L"
                 else "$n = $n"
             }.joinToString(", ")
             t to applyArgsBlock
@@ -107,6 +116,9 @@ class MessageDispatcherProcessor : AbstractProcessor() {
         val fnBldr = FunSpec.builder(name + "Dispatch")
         receiver?.let {
             fnBldr.receiver(it.asType().kotlinType)
+        }
+        if (suspendable) {
+            fnBldr.addModifiers(KModifier.SUSPEND)
         }
         parameters.forEachIndexed { i, (n, t) ->
             val t2 = if (i == varPosition) baseType else t
@@ -171,10 +183,12 @@ class MessageDispatcherProcessor : AbstractProcessor() {
                 val itemType = (this as DeclaredType).typeArguments[0]!!
                 ParameterizedTypeName.get(List::class.asClassName(), itemType.kotlinType)
             }
+
             "java.util.Set" -> {
                 val itemType = (this as DeclaredType).typeArguments[0]!!
                 ParameterizedTypeName.get(Set::class.asClassName(), itemType.kotlinType)
             }
+
             "java.util.Map" -> {
                 val keyType = (this as DeclaredType).typeArguments[0]!!
                 val valueType = this.typeArguments[1]!!
@@ -183,14 +197,17 @@ class MessageDispatcherProcessor : AbstractProcessor() {
                     keyType.kotlinType, valueType.kotlinType
                 )
             }
+
             "kotlinx.collections.immutable.ImmutableList" -> {
                 val itemType = (this as DeclaredType).typeArguments[0]!!
                 ParameterizedTypeName.get(ImmutableList::class.asClassName(), itemType.kotlinType)
             }
+
             "kotlinx.collections.immutable.ImmutableSet" -> {
                 val itemType = (this as DeclaredType).typeArguments[0]!!
                 ParameterizedTypeName.get(ImmutableSet::class.asClassName(), itemType.kotlinType)
             }
+
             "kotlinx.collections.immutable.ImmutableMap" -> {
                 val keyType = (this as DeclaredType).typeArguments[0]!!
                 val valueType = this.typeArguments[1]!!
@@ -199,6 +216,7 @@ class MessageDispatcherProcessor : AbstractProcessor() {
                     keyType.kotlinType, valueType.kotlinType
                 )
             }
+
             else -> this.asTypeName()
         }
 
