@@ -17,7 +17,6 @@
 package org.letses.persistence
 
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.collect
 import org.letses.entity.EntityState
 import org.letses.eventsourcing.EventSourced
 import org.letses.eventsourcing.EventVersion
@@ -82,31 +81,39 @@ abstract class AbstractRepository<S : EntityState, E : Event, in C : MsgHandlerC
             publishEvents(entityId, events)
         }
 
-        suspend fun begin() = coroutineScope {
+        suspend fun begin(skipLoading: Boolean = false) = coroutineScope {
             coroutineContext.span?.log("Repository.Transaction.begin")
-            snapshotStore?.load(entityId)?.let { s ->
-                loadSnapshot(s)
-                coroutineContext.span?.log("Repository.Transaction.snapshotLoaded")
-                prevSnapshot = s
-                log.debug("<$correlationId>[${model.eventCategory}_$entityId] snapshot loaded, ver=${s.version}")
-            }
-            val eventCount = eventStore.read(streamName(entityId), version + 1, ::applyEvent)
-            log.debug("<$correlationId>[${model.eventCategory}_$entityId] $eventCount event(s) replayed")
-            coroutineContext.span?.run {
-                log(mapOf("event" to "Repository.Transaction.eventsReplayed", "numEvents" to eventCount))
+            if (skipLoading) {
+                log.debug("<$correlationId>[${model.eventCategory}_$entityId] skipLoading is enabled")
+                coroutineContext.span?.log("skip loading")
+            } else {
+                snapshotStore?.load(entityId)?.let { s ->
+                    loadSnapshot(s)
+                    coroutineContext.span?.log("Repository.Transaction.snapshotLoaded")
+                    prevSnapshot = s
+                    log.debug("<$correlationId>[${model.eventCategory}_$entityId] snapshot loaded, ver=${s.version}")
+                }
+                val eventCount = eventStore.read(streamName(entityId), version + 1, ::applyEvent)
+                log.debug("<$correlationId>[${model.eventCategory}_$entityId] $eventCount event(s) replayed")
+                coroutineContext.span?.run {
+                    log(mapOf("event" to "Repository.Transaction.eventsReplayed", "numEvents" to eventCount))
+                }
             }
         }
 
     }
 
-    override suspend fun beginTransaction(settings: TransactionSettings): Transaction<S, E, C> = TransactionImpl(
+    override suspend fun beginTransaction(
+        settings: TransactionSettings,
+        skipLoading: Boolean
+    ): Transaction<S, E, C> = TransactionImpl(
         entityId = settings.entityId,
         correlationId = settings.correlationId,
         msgIdExtractor = settings.msgIdExtractor,
         partitionKey = settings.partitionKey,
         deduplicationMemSize = settings.deduplicationMemSize,
         enhanceHeading = settings.enhanceHeading
-    ).apply { begin() }
+    ).apply { begin(skipLoading) }
 
     override fun close() {
         (eventPublisher as? Closeable)?.close()

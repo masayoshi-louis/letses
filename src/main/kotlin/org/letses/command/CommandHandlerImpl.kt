@@ -79,11 +79,11 @@ internal class CommandHandlerImpl<S : EntityState, E : Event>(
                     else it.toBasic().copy(sagaContext = h.sagaContext)
                 }
             )
-            val tx = repo.beginTransaction(txSettings)
+            val isInitMsg = model.isInitialMessage(envelope.payload)
+            val tx = repo.beginTransaction(txSettings, skipLoading = isInitMsg && model.allowFastInitialize)
             if (h.expectedVersion != AnyVersion) {
                 tx.checkVersion(h.expectedVersion)
             }
-            val isInitMsg = model.isInitialMessage(envelope.payload)
             when {
                 !tx.isEntityExists && autoInitialize != null -> {
                     tx.handleMsg(autoInitialize.initMsg(h.targetId), CoroutineAggregateMsgHandlerContext(this))

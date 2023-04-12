@@ -55,4 +55,7 @@ interface AggregateModel<S : EntityState, E : Event> : EventSourcedAggregate<S, 
     @Suppress("UNCHECKED_CAST")
     val type: AggregateType<S, E>
         get() = this as? AggregateType<S, E> ?: throw NotImplementedError()
+
+    val allowFastInitialize: Boolean
+        get() = false
 }

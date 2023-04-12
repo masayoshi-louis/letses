@@ -26,7 +26,7 @@ interface Repository<S : EntityState, E : Event, in C : MsgHandlerContext> : Clo
 
     val model: EventSourced<S, E, C>
 
-    suspend fun beginTransaction(settings: TransactionSettings): Transaction<S, E, C>
+    suspend fun beginTransaction(settings: TransactionSettings, skipLoading: Boolean = false): Transaction<S, E, C>
 
     suspend fun salvageUnpublishedEvents()
 
