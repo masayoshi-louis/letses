@@ -105,7 +105,7 @@ class MessageDispatcherProcessor : AbstractProcessor() {
             val t = it.parameters[varPosition].asType()
             val applyArgsBlock = it.parameters.mapIndexedNotNull { i, p ->
                 val n = p.simpleName.toString()
-                if (n == "continuation") null
+                if (p.asType().fullName == "kotlin.coroutines.Continuation") null
                 else if (i == varPosition) "$n = %L"
                 else "$n = $n"
             }.joinToString(", ")
